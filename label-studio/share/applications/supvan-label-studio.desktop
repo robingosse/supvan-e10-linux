@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SUPVAN E10 Label Studio
+Comment=Design and print continuous labels for the SUPVAN E10 on Linux
+Exec=supvan-label-studio
+Icon=supvan-e10-label-studio
+Terminal=false
+Categories=Graphics;Utility;
+StartupNotify=true

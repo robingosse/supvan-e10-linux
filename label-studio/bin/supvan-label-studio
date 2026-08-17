@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+APPDIR="${XDG_DATA_HOME:-$HOME/.local/share}/supvan-label-studio"
+exec /usr/bin/python3 "$APPDIR/run.py" "$@"

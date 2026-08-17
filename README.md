@@ -1,198 +1,160 @@
-# SUPVAN E10 Linux Suite
+# SUPVAN E10 Linux
 
-**Unofficial Linux driver + continuous-label editor for the SUPVAN E10.**
+**Unofficial Linux driver + continuous-label editor for the SUPVAN E10 thermal label printer.**
 
-This repository packages two pieces that belong together:
+![SUPVAN Label Studio](docs/images/label-studio.png)
 
-1. **`driver/`** — a Rust IPP/CUPS printer service with physically qualified
-   E10/T15 Bluetooth support.
-2. **`label-studio/`** — a GTK label editor with continuous-length tape,
-   auto-sizing, text/images, and full-width movable QR codes.
+This project exists because the E10 works well from SUPVAN's mobile app, but historically had no comfortable Linux workflow. It packages the printer transport/service and a small desktop label editor into one community project.
 
-> **Status:** public-candidate / early release. The E10 path has been exercised
-> extensively on Linux Mint with real hardware, including power loss, CUPS job
-> retention, cancellation, reconnects and multi-buffer output. Other SUPVAN
-> models retained from the upstream driver have **not** been re-qualified by
-> this fork.
+> **Tested hardware:** SUPVAN E10 (`T0010...`) on Linux Mint, Bluetooth Classic/RFCOMM.
+>
+> This project is independent and is not affiliated with or endorsed by SUPVAN.
 
-## Label Studio
+## What is included
 
-<p align="center">
-  <img src="docs/images/label-studio.png" alt="SUPVAN Label Studio on Linux" width="1100">
-</p>
+### E10 Linux driver/service
 
-The companion GTK editor treats the E10 as continuous tape rather than a stack of fixed pages. Design left-to-right, auto-size the length, add text or images, generate full-width movable QR codes, then send the exact 88-dot raster through the qualified CUPS driver.
+The Rust driver integrates the E10 with CUPS/IPP and handles the unpleasant parts so applications do not need to know the printer protocol:
 
-## Proof that the tiny beast prints
+- Bluetooth discovery and persisted paired-device recovery
+- E10/T15 print protocol
+- multi-buffer compressed print transfers
+- CUPS job lifecycle and cancellation
+- per-printer job serialization
+- live media interrogation before E10 jobs
+- recovery after printer-app restarts
+- recovery after Bluetooth disconnects
+- physical power-loss recovery
+- narrow self-healing for stale BlueZ links after `EHOSTDOWN`
 
-<p align="center">
-  <img src="docs/images/printed-label-closeup.jpg" alt="SUPVAN E10 printed acceptance label" width="720">
-</p>
+### SUPVAN Label Studio
 
-<p align="center">
-  <img src="docs/images/qualification-labels.jpg" alt="SUPVAN E10 qualification labels" width="520">
-</p>
+A GTK desktop editor aimed at the E10's continuous tape:
 
-Label Studio renders the exact device raster before CUPS submission:
+- tape runs left to right on screen
+- custom label length
+- optional **Auto-size Length** with end margin
+- text objects
+- imported images
+- boxes and lines
+- move, duplicate, rotate and delete objects
+- exact-raster PNG export
+- direct CUPS printing
+- **full printable-width QR-code generation** from arbitrary text/URLs
+- QR modules are kept aligned to whole printer dots instead of being casually resampled
 
-<p align="center">
-  <img src="docs/images/sample-label-raster.png" alt="Example Label Studio exact raster" height="300">
-</p>
+The E10's physical print head is 96 dots (12 mm at 8 dots/mm). The vendor-style usable content band qualified by this project is 88 dots (11 mm), centered on that head.
 
-## What works
+## Quick install
 
-### E10 driver
-
-- SUPVAN E10 / Bluetooth name family `T0010...`.
-- Bluetooth Classic RFCOMM printing.
-- E10-specific **T15** protocol, not the T50 print path.
-- 96-dot physical thermal head with an 88-dot / 11 mm printable content band.
-- 8 dots/mm feed geometry (about 203 dpi).
-- Multi-buffer compressed output for labels longer than one T15 buffer.
-- CUPS/IPP job submission and queue lifecycle.
-- Held-job recovery after printer/application outages.
-- BlueZ stale-link self-healing after physical power loss.
-- Cold-start recovery when the service starts while the printer is off.
-- Exact 88-pixel-wide JPEG mode for continuous Label Studio jobs.
-
-### Label Studio
-
-- Tape runs **left to right** on screen.
-- **Auto-size Length** or manual length.
-- Full-width **Generate QR Code** button. Enter text/URL/data and it creates a
-  movable scan-safe QR object.
-- Movable text, images, rectangles and lines.
-- Rotate, duplicate, edit and delete objects.
-- Arrow keys move one printer dot (0.125 mm); Shift+Arrow moves 1 mm.
-- 12 mm / 15 mm stock visualization.
-- Exact-raster PNG export.
-- Automatic CUPS queue detection, with a manual queue field if needed.
-- Editor length range: **5 mm to 6000 mm**.
-
-## Continuous tape, not fixed 50 mm pages
-
-The E10 is best treated as a fixed-width roll printer:
-
-- stock width: typically 15 mm;
-- physical head: 12 mm / 96 dots;
-- verified printable content band: 11 mm / 88 dots;
-- feed resolution: 8 dots/mm;
-- label length: chosen by the job.
-
-A 50 mm label is therefore 88 × 400 printable dots. A 100 mm label is
-88 × 800. Label Studio can represent much longer strips, although very long
-multi-metre jobs are not yet part of the public hardware qualification claim.
-
-## Quick start on Linux Mint / Ubuntu
-
-### 1. Pair the E10
-
-Use Linux Mint's Bluetooth settings and pair/trust the printer first. Its name
-normally begins with `T0010`.
-
-### 2. Install the suite
+For the current public candidate, clone the repository and run:
 
 ```bash
-git clone https://github.com/robingosse/supvan-e10-linux.git
-cd supvan-e10-linux
 ./install.sh
 ```
 
-The installer checks the required Rust, CUPS, BlueZ, GTK and Python pieces,
-then installs the printer service and Label Studio into your user account.
+The installer builds/installs the printer service and installs Label Studio for the current user.
 
-If dependencies are missing, it prints the exact Linux Mint / Ubuntu `apt`
-command to install them. See [docs/INSTALL.md](docs/INSTALL.md) for the manual
-path.
-
-### 3. Launch Label Studio
-
-Open **SUPVAN E10 Label Studio** from the Mint application menu, or run:
+Then pair the E10 in your normal Linux Bluetooth UI, power it on, and launch:
 
 ```bash
 supvan-label-studio
 ```
 
-Create something, click **Generate QR Code** if desired, then **PRINT**.
+Label Studio detects available CUPS queues. Create a label and press **PRINT**.
 
-## Repository layout
+## Continuous tape
 
-```text
-.
-├── driver/          Rust IPP/CUPS + Bluetooth/T15 printer stack
-├── label-studio/    Python/GTK continuous label editor
-├── docs/            installation, troubleshooting, qualification and protocol notes
-├── install.sh       installs both components for the current user
-└── uninstall.sh     removes both user-scoped components
-```
+The E10 should be treated as a narrow continuous-roll printer, not as a printer that fundamentally only understands 30/40/50 mm pages. Width is constrained by the head and stock; print length is generated from the raster height and split into as many T15 buffers as required.
 
-## Qualification summary
+The editor therefore works in **millimetres** and supports fixed or content-driven lengths. Very long output is structurally supported, but the project deliberately does not claim every possible multi-metre length has been physically qualified yet.
 
-The E10 implementation was subjected to four hardware qualification gates
-before packaging:
+## QR codes
 
-- **Gate 1:** correct T15 protocol and real two-buffer printing.
-- **Gate 2:** complete-job serialization, live-media safety, back-to-back jobs,
-  CUPS retirement and final hardware idle.
-- **Gate 3:** service outage retention, queued cancellation and Bluetooth
-  reconnect.
-- **Gate 4:** physical printer power loss, real BlueZ `EHOSTDOWN` stale-link
-  repair, and cold-start recovery while the printer begins powered off.
+Click **Generate QR Code**, enter text, a URL, a serial number, or any other payload, and Label Studio creates a movable QR object sized to the full 88-dot printable band by default.
 
-See [docs/QUALIFICATION.md](docs/QUALIFICATION.md).
+The renderer preserves integer printer-dot modules. If a payload is too dense to produce a sensible physical code at this narrow width, the app warns instead of silently generating mush.
 
-## Known limitations
+## Hardware qualification
 
-- **Only the E10 is physically release-qualified by this fork.** The inherited
-  upstream model registry contains other SUPVAN models, but this project does
-  not claim new hardware validation for them.
-- E10 release testing is based on Bluetooth Classic RFCOMM. BLE printing is not
-  part of the E10 qualification claim.
-- The editor permits very long continuous jobs, but multi-metre output has not
-  yet been physically endurance-tested.
-- Thermal darkness/density deserves a dedicated visual calibration pass before
-  a later stable release.
-- First public packaging is source/user-install oriented. A polished combined
-  `.deb` is planned.
+The E10 implementation was tested on real hardware through progressively nastier release gates:
 
-## Troubleshooting
+1. **Protocol / multi-buffer output**: exact 88×400 raster, two T15 buffers, complete far-end physical output.
+2. **CUPS lifecycle / back-to-back jobs**: serialized jobs, live media use, no unsafe geometry fallback, clean retirement.
+3. **Service outage / cancellation / reconnect**: queued jobs survive service downtime, canceled jobs do not print, reconnect succeeds.
+4. **Physical power loss / cold start**: printer may disappear while the service runs or the service may start while the printer is off. Held jobs recover after power-on without requiring a service restart. A stale BlueZ `Connected=yes`/`EHOSTDOWN` state is cleared and RFCOMM retried once.
 
-Start with [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+A physical acceptance print from the qualification work:
 
-Useful commands:
+![Physical E10 acceptance print](docs/images/printed-test-label.jpg)
 
-```bash
-systemctl --user status supvan-printer-app
-journalctl --user -u supvan-printer-app --no-pager -n 100
-lpstat -p -d
-```
+## Why T15 matters
+
+Reverse engineering of SUPVAN's Android application showed that the E10/T0010 route uses the vendor's **T15** printing implementation, not the T50Plus path. That distinction is the core reason generic T50-style attempts could connect yet fail to print correctly.
+
+Known E10/T15 properties used here include:
+
+- 8 dots/mm (~203 dpi)
+- 96-dot physical head
+- 12 bytes per print column
+- 4000-byte raw print buffer
+- 14-byte T15 buffer header
+- up to 332 print columns per raw buffer
+- independent compression per buffer
+- `START_PRINT` → `PAPER_BACK` → compressed buffers → `BUF_FULL(0)` → natural completion
+- no `STOP_PRINT` on successful completion
+
+See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the engineering notes included with the driver.
+
+## Status and known limitations
+
+This is an early community release. The core E10 print path is real-hardware qualified, but there is still polish to do:
+
+- density/darkness control needs broader physical calibration
+- very long multi-metre jobs need soak testing before we advertise a hard maximum
+- additional tape widths/materials need more physical qualification
+- E10 BLE printing is not claimed as production-qualified; Bluetooth Classic/RFCOMM is the proven path
+- packaging will improve beyond the current installer
+
+Please report failures with the printer model/name, Linux distribution, relevant CUPS state, and service logs. Do **not** post private Bluetooth identifiers unless they are necessary for debugging.
 
 ## Development
 
-Driver:
+Driver checks:
 
 ```bash
 cd driver
+cargo fmt --check
 cargo test --workspace
-cargo check --all-targets
+cargo check --workspace
 ```
 
-Label Studio:
+Label Studio tests:
 
 ```bash
 cd label-studio
-PYTHONPATH=. python3 -m pytest -q
+python3 -m unittest discover -s tests -v
 ```
 
-Run everything available on the current machine:
+## Project layout
 
-```bash
-make test
+```text
+.
+├── driver/          Rust protocol, printer service, CUPS/IPP integration
+├── label-studio/    Python/GTK label editor
+├── docs/            protocol, install, qualification and screenshots
+├── install.sh       combined user-facing installer
+└── uninstall.sh     removal helper
 ```
 
-## License and credits
+## Attribution and licensing
 
-MIT. See [LICENSE](LICENSE) and [ATTRIBUTION.md](ATTRIBUTION.md).
+This work grew from the open-source `supvan-cups` project and includes substantial E10-specific reverse engineering, protocol work, resilience fixes, continuous-roll handling, and Label Studio. See [`ATTRIBUTION.md`](ATTRIBUTION.md) and the license files in this repository for exact notices and terms.
 
-This is an independent community project. **SUPVAN is a trademark of its
-respective owner; this project is not affiliated with or endorsed by SUPVAN.**
+If you redistribute or modify the project, preserve the upstream notices and applicable licenses.
+
+## Contributing
+
+Issues, logs, protocol observations, hardware testing and patches are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+If you own a different SUPVAN model and want to help qualify it, please make it very clear which model and serial-name family you tested. We do not want one printer's protocol assumptions quietly leaking into another model again.

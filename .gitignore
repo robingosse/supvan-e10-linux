@@ -1,0 +1,12 @@
+# Rust
+**/target/
+# Python
+**/__pycache__/
+*.py[cod]
+.venv/
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+# Local diagnostics
+*.log

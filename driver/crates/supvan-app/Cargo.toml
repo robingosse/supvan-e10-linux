@@ -1,0 +1,42 @@
+[package]
+name = "supvan-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IPP/CUPS printer application for SUPVAN label printers with qualified E10/T15 support"
+
+[[bin]]
+name = "supvan-printer-app"
+path = "src/main.rs"
+
+[dependencies]
+supvan-proto = { workspace = true }
+ipp-printer-app = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+async-trait = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+dbus = "0.9"
+dbus-crossroads = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+print_raster = "0.1"
+futures = "0.3"
+parking_lot = "0.12"
+libc = "0.2"
+# JPEG decode for the image/jpeg document-format path (IPP Everywhere). Only
+# the jpeg codec is enabled to keep the build lean.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# BLE GATT discovery + transport (E11/E12-class printers). Off by default.
+bluer = { version = "0.17", optional = true, features = ["bluetoothd"] }
+futures-util = { version = "0.3", optional = true }
+
+[features]
+# BLE is on by default so the app ships GATT support out of the box; disable
+# with --no-default-features for a BlueZ-free build.
+default = ["ble"]
+# Enables BLE GATT discovery (LE scan) and the proto BLE transport.
+ble = ["dep:bluer", "dep:futures-util", "supvan-proto/ble"]

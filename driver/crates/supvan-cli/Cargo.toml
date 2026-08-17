@@ -1,0 +1,13 @@
+[package]
+name = "supvan-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Diagnostic CLI for the SUPVAN printer protocol stack"
+
+[dependencies]
+supvan-proto.workspace = true
+env_logger.workspace = true
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Supvan T50 Pro Printer Application
+After=bluetooth.target dbus.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/supvan-printer-app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
