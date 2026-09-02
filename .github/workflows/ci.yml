@@ -30,5 +30,29 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip pytest pillow qrcode
-      - run: PYTHONPATH=. python -m pytest -q
-      - run: python -m py_compile supvan_label_studio/core.py supvan_label_studio/print_backend.py supvan_label_studio/app.py
+      - name: Compile all Studio modules
+        run: python -m py_compile supvan_label_studio/*.py
+      - name: Run Label Studio tests
+        run: PYTHONPATH=. python -m pytest -q
+      - name: Exact-raster self-test
+        run: PYTHONPATH=. python scripts/self-test.py
+      - name: Build v0.3.2 source and self-extracting installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(PYTHONPATH=. python -c 'from supvan_label_studio import __version__; print(__version__)')"
+          NAME="supvan-label-studio-v${VERSION}"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/$NAME"
+          rsync -a --exclude='.pytest_cache' --exclude='__pycache__' --exclude='*.pyc' ./ "$STAGE/$NAME/"
+          tar -C "$STAGE" -czf "$NAME.tar.gz" "$NAME"
+          cat packaging/self-extract-header.sh "$NAME.tar.gz" > "$NAME.run"
+          chmod +x "$NAME.run"
+          sha256sum "$NAME.run" "$NAME.tar.gz" > "SHA256SUMS-$NAME.txt"
+          mkdir -p dist
+          mv "$NAME.run" "$NAME.tar.gz" "SHA256SUMS-$NAME.txt" dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supvan-label-studio
+          path: label-studio/dist/*
+          if-no-files-found: error
