@@ -11,7 +11,6 @@ except Exception:
 
 from PIL import Image
 
-from .core import ONE_DOT_MM, PRINTABLE_WIDTH_MM
 
 PREVIEW_PX_PER_MM = 28.0
 MAX_CANVAS_WIDTH_PX = 32_000
@@ -63,7 +62,7 @@ class LabelCanvas(Gtk.DrawingArea):
         return max(0.25, min(requested, long_label_limit))
 
     def printable_top_px(self) -> float:
-        return (self.doc.stock_width_mm - PRINTABLE_WIDTH_MM) / 2.0 * self.pxmm
+        return (self.doc.stock_width_mm - self.doc.printable_width_mm) / 2.0 * self.pxmm
 
     def refresh_size(self) -> None:
         width = int(math.ceil(self.doc.length_mm * self.pxmm)) + 2
@@ -78,7 +77,7 @@ class LabelCanvas(Gtk.DrawingArea):
     def to_doc_mm(self, x: float, y: float) -> tuple[float, float]:
         along_mm = x / self.pxmm
         across_from_top = (y - self.printable_top_px()) / self.pxmm
-        across_mm = PRINTABLE_WIDTH_MM - across_from_top
+        across_mm = self.doc.printable_width_mm - across_from_top
         return across_mm, along_mm
 
     def on_draw(self, _widget, cr):
@@ -86,7 +85,7 @@ class LabelCanvas(Gtk.DrawingArea):
         stock_width_px = self.doc.length_mm * pxmm
         stock_height_px = self.doc.stock_width_mm * pxmm
         printable_top = self.printable_top_px()
-        printable_height_px = PRINTABLE_WIDTH_MM * pxmm
+        printable_height_px = self.doc.printable_width_mm * pxmm
 
         cr.set_source_rgb(0.95, 0.91, 0.82)
         cr.rectangle(0, 0, stock_width_px, stock_height_px)
@@ -124,7 +123,7 @@ class LabelCanvas(Gtk.DrawingArea):
         if self.selected is not None and self.selected in self.doc.items:
             x_mm, y_mm, width_mm, height_mm = self.doc.item_bounds_mm(self.selected)
             selection_x = y_mm * pxmm
-            selection_y = printable_top + (PRINTABLE_WIDTH_MM - (x_mm + width_mm)) * pxmm
+            selection_y = printable_top + (self.doc.printable_width_mm - (x_mm + width_mm)) * pxmm
             selection_width = height_mm * pxmm
             selection_height = width_mm * pxmm
             cr.set_source_rgb(0.12, 0.36, 0.82)
@@ -146,7 +145,7 @@ class LabelCanvas(Gtk.DrawingArea):
             return False
         x_mm, y_mm = self.to_doc_mm(event.x, event.y)
         item = None
-        if 0 <= x_mm <= PRINTABLE_WIDTH_MM and 0 <= y_mm <= self.doc.length_mm:
+        if 0 <= x_mm <= self.doc.printable_width_mm and 0 <= y_mm <= self.doc.length_mm:
             item = self.doc.hit_test(x_mm, y_mm)
         self.owner.set_selected(item)
         if item is not None:
@@ -197,7 +196,7 @@ class LabelCanvas(Gtk.DrawingArea):
         if self.selected is None:
             return False
         before = self.owner.snapshot()
-        step = 1.0 if event.state & Gdk.ModifierType.SHIFT_MASK else ONE_DOT_MM
+        step = 1.0 if event.state & Gdk.ModifierType.SHIFT_MASK else self.doc.one_dot_mm
         if event.keyval == Gdk.KEY_Left:
             self.selected.y_mm -= step
         elif event.keyval == Gdk.KEY_Right:

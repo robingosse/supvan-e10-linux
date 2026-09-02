@@ -20,6 +20,7 @@ DEFAULT_STOCK_WIDTH_MM = 15.0
 MAX_LENGTH_MM = 6000.0
 MIN_LENGTH_MM = 5.0
 ONE_DOT_MM = 1.0 / DOTS_PER_MM
+DEFAULT_TEXT_ROTATION = 90
 
 ECC_MAP = {
     "L": ERROR_CORRECT_L,
@@ -33,12 +34,12 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def mm_to_dots(mm: float) -> int:
-    return max(0, int(round(mm * DOTS_PER_MM)))
+def mm_to_dots(mm: float, dots_per_mm: float = DOTS_PER_MM) -> int:
+    return max(0, int(round(mm * float(dots_per_mm))))
 
 
-def dots_to_mm(dots: int) -> float:
-    return dots / DOTS_PER_MM
+def dots_to_mm(dots: int, dots_per_mm: float = DOTS_PER_MM) -> float:
+    return dots / float(dots_per_mm)
 
 
 def resolve_font(family: str = "DejaVu Sans", bold: bool = False) -> str:
@@ -81,10 +82,12 @@ def qr_matrix(data: str, ecc: str = "M", border_modules: int = 4) -> list[list[b
     return qr.get_matrix()
 
 
-def qr_safe_module_scale(data: str, ecc: str = "M", border_modules: int = 4) -> tuple[int, int]:
+def qr_safe_module_scale(
+    data: str, ecc: str = "M", border_modules: int = 4, printable_width_dots: int = PRINTABLE_WIDTH_DOTS
+) -> tuple[int, int]:
     matrix = qr_matrix(data, ecc, border_modules)
     modules = len(matrix)
-    scale = PRINTABLE_WIDTH_DOTS // modules
+    scale = max(1, int(printable_width_dots)) // modules
     return modules, scale
 
 
@@ -108,6 +111,7 @@ class TextItem(Item):
     family: str = "DejaVu Sans"
     bold: bool = False
     autofit_height: bool = False
+    fill_printable_band: bool = False
 
 
 @dataclass
@@ -161,17 +165,32 @@ class LabelDocument:
     density: int = 8
     auto_size: bool = True
     auto_margin_mm: float = 3.0
+    printable_width_dots: int = PRINTABLE_WIDTH_DOTS
+    dots_per_mm: float = DOTS_PER_MM
+    printer_profile_key: str = "supvan-e10-linux-validated"
+    default_text_rotation: int = DEFAULT_TEXT_ROTATION
     items: list[Item] = field(default_factory=list)
-    version: int = 2
+    version: int = 4
 
     def validate(self) -> None:
         self.length_mm = _clamp(float(self.length_mm), MIN_LENGTH_MM, MAX_LENGTH_MM)
-        self.stock_width_mm = float(self.stock_width_mm)
-        if self.stock_width_mm not in (12.0, 15.0):
-            self.stock_width_mm = DEFAULT_STOCK_WIDTH_MM
+        self.stock_width_mm = _clamp(float(self.stock_width_mm), 1.0, 500.0)
         self.density = int(_clamp(int(self.density), 0, 15))
         self.auto_size = bool(self.auto_size)
         self.auto_margin_mm = _clamp(float(self.auto_margin_mm), 0.0, 100.0)
+        self.printable_width_dots = max(8, int(self.printable_width_dots))
+        self.dots_per_mm = max(1.0, float(self.dots_per_mm))
+        self.printer_profile_key = str(self.printer_profile_key or "custom")
+        rotation = int(self.default_text_rotation) % 360
+        self.default_text_rotation = rotation if rotation in (0, 90, 180, 270) else DEFAULT_TEXT_ROTATION
+
+    @property
+    def printable_width_mm(self) -> float:
+        return self.printable_width_dots / self.dots_per_mm
+
+    @property
+    def one_dot_mm(self) -> float:
+        return 1.0 / self.dots_per_mm
 
     def add(self, item: Item) -> Item:
         if not item.id:
@@ -206,7 +225,7 @@ class LabelDocument:
         if item not in self.items:
             raise ValueError("Item is not in this document")
         _, _, width, _ = self.item_bounds_mm(item)
-        available = max(0.0, PRINTABLE_WIDTH_MM - width)
+        available = max(0.0, self.printable_width_mm - width)
         if alignment == "start":
             item.x_mm = 0.0
         elif alignment == "center":
@@ -232,8 +251,8 @@ class LabelDocument:
     def duplicate(self, item: Item) -> Item:
         data = item.to_dict()
         data["id"] = ""
-        data["x_mm"] = float(data.get("x_mm", 0.0)) + ONE_DOT_MM * 2
-        data["y_mm"] = float(data.get("y_mm", 0.0)) + ONE_DOT_MM * 2
+        data["x_mm"] = float(data.get("x_mm", 0.0)) + self.one_dot_mm * 2
+        data["y_mm"] = float(data.get("y_mm", 0.0)) + self.one_dot_mm * 2
         dup = item_from_dict(data)
         return self.add(dup)
 
@@ -247,6 +266,10 @@ class LabelDocument:
             "density": self.density,
             "auto_size": self.auto_size,
             "auto_margin_mm": self.auto_margin_mm,
+            "printable_width_dots": self.printable_width_dots,
+            "dots_per_mm": self.dots_per_mm,
+            "printer_profile_key": self.printer_profile_key,
+            "default_text_rotation": self.default_text_rotation,
             "items": [i.to_dict() for i in self.items],
         }
 
@@ -260,6 +283,10 @@ class LabelDocument:
             density=int(data.get("density", 8)),
             auto_size=bool(data.get("auto_size", True)),
             auto_margin_mm=float(data.get("auto_margin_mm", 3.0)),
+            printable_width_dots=int(data.get("printable_width_dots", PRINTABLE_WIDTH_DOTS)),
+            dots_per_mm=float(data.get("dots_per_mm", DOTS_PER_MM)),
+            printer_profile_key=str(data.get("printer_profile_key", "supvan-e10-linux-validated")),
+            default_text_rotation=int(data.get("default_text_rotation", DEFAULT_TEXT_ROTATION)),
         )
         for raw in data.get("items", []):
             doc.items.append(item_from_dict(raw))
@@ -276,14 +303,14 @@ class LabelDocument:
         return cls.from_dict(json.loads(Path(path).read_text()))
 
     def item_bounds_mm(self, item: Item) -> tuple[float, float, float, float]:
-        tile, _ = render_item_tile(item)
-        w_mm = dots_to_mm(tile.width)
-        h_mm = dots_to_mm(tile.height)
+        tile, _ = render_item_tile(item, self.dots_per_mm, self.printable_width_dots)
+        w_mm = dots_to_mm(tile.width, self.dots_per_mm)
+        h_mm = dots_to_mm(tile.height, self.dots_per_mm)
         return item.x_mm, item.y_mm, w_mm, h_mm
 
     def clamp_item(self, item: Item, allow_length_extend: bool = False) -> None:
         _, _, w, h = self.item_bounds_mm(item)
-        item.x_mm = _clamp(item.x_mm, 0.0, max(0.0, PRINTABLE_WIDTH_MM - w))
+        item.x_mm = _clamp(item.x_mm, 0.0, max(0.0, self.printable_width_mm - w))
         if allow_length_extend and self.auto_size:
             item.y_mm = _clamp(item.y_mm, 0.0, max(0.0, MAX_LENGTH_MM - h))
         else:
@@ -308,12 +335,12 @@ class LabelDocument:
 
     def render(self, background: int = 255) -> Image.Image:
         self.validate()
-        height = max(1, mm_to_dots(self.length_mm))
-        canvas = Image.new("L", (PRINTABLE_WIDTH_DOTS, height), background)
+        height = max(1, mm_to_dots(self.length_mm, self.dots_per_mm))
+        canvas = Image.new("L", (self.printable_width_dots, height), background)
         for item in self.items:
-            tile, mask = render_item_tile(item)
-            x = mm_to_dots(item.x_mm)
-            y = mm_to_dots(item.y_mm)
+            tile, mask = render_item_tile(item, self.dots_per_mm, self.printable_width_dots)
+            x = mm_to_dots(item.x_mm, self.dots_per_mm)
+            y = mm_to_dots(item.y_mm, self.dots_per_mm)
             if x >= canvas.width or y >= canvas.height:
                 continue
             if x + tile.width > canvas.width or y + tile.height > canvas.height:
@@ -398,17 +425,57 @@ def _font_for_height(item: TextItem, font_path: str, target_height_px: int) -> t
     return best_font, best_spacing, best_bbox
 
 
-def _text_tile(item: TextItem) -> tuple[Image.Image, Image.Image]:
+def _font_for_width(item: TextItem, font_path: str, target_width_px: int) -> tuple[ImageFont.FreeTypeFont, int, tuple[int, int, int, int]]:
+    """Largest font whose complete multiline block fits the requested width."""
+    lo = 4
+    hi = max(lo, int(target_width_px) * 4)
+    best_size = lo
+    best_font = ImageFont.truetype(font_path, best_size)
+    best_spacing = max(1, best_size // 5)
+    best_bbox = _measure_multiline(item.text, best_font, best_spacing)
+    while lo <= hi:
+        size = (lo + hi) // 2
+        font = ImageFont.truetype(font_path, size)
+        spacing = max(1, size // 5)
+        bbox = _measure_multiline(item.text, font, spacing)
+        needed = max(1, bbox[2] - bbox[0]) + 2
+        if needed <= target_width_px:
+            best_size = size
+            best_font = font
+            best_spacing = spacing
+            best_bbox = bbox
+            lo = size + 1
+        else:
+            hi = size - 1
+    return best_font, best_spacing, best_bbox
+
+
+def _text_tile(item: TextItem, dots_per_mm: float = DOTS_PER_MM, printable_width_dots: int = PRINTABLE_WIDTH_DOTS) -> tuple[Image.Image, Image.Image]:
     font_path = resolve_font(item.family, item.bold)
-    if item.autofit_height:
-        target_height = max(6, mm_to_dots(item.size_mm))
+    rotation = int(item.rotation) % 360
+    if item.fill_printable_band and rotation in (0, 180):
+        target_width = max(8, int(printable_width_dots))
+        font, spacing, bbox = _font_for_width(item, font_path, target_width)
+        w = target_width
+        h = max(1, bbox[3] - bbox[1] + 2)
+        x = max(1 - bbox[0], (target_width - (bbox[2] - bbox[0])) // 2 - bbox[0])
+        pos = (x, 1 - bbox[1])
+    elif item.fill_printable_band:
+        target_height = max(8, int(printable_width_dots))
+        font, spacing, bbox = _font_for_height(item, font_path, target_height)
+        w = max(1, bbox[2] - bbox[0] + 2)
+        h = target_height
+        y = max(1 - bbox[1], (target_height - (bbox[3] - bbox[1])) // 2 - bbox[1])
+        pos = (1 - bbox[0], y)
+    elif item.autofit_height:
+        target_height = max(6, mm_to_dots(item.size_mm, dots_per_mm))
         font, spacing, bbox = _font_for_height(item, font_path, target_height)
         w = max(1, bbox[2] - bbox[0] + 2)
         h = target_height
         y = max(1 - bbox[1], (target_height - (bbox[3] - bbox[1])) // 2 - bbox[1])
         pos = (1 - bbox[0], y)
     else:
-        font_px = max(6, mm_to_dots(item.size_mm))
+        font_px = max(6, mm_to_dots(item.size_mm, dots_per_mm))
         font = ImageFont.truetype(font_path, font_px)
         spacing = max(1, font_px // 5)
         bbox = _measure_multiline(item.text, font, spacing)
@@ -425,13 +492,13 @@ def _text_tile(item: TextItem) -> tuple[Image.Image, Image.Image]:
     return _rotate(tile, mask, item.rotation)
 
 
-def _qr_tile(item: QRItem) -> tuple[Image.Image, Image.Image | None]:
+def _qr_tile(item: QRItem, dots_per_mm: float = DOTS_PER_MM, printable_width_dots: int = PRINTABLE_WIDTH_DOTS) -> tuple[Image.Image, Image.Image | None]:
     matrix = qr_matrix(item.data, item.ecc, item.border_modules)
     modules = len(matrix)
     if item.full_width:
-        total_px = PRINTABLE_WIDTH_DOTS
+        total_px = int(printable_width_dots)
     else:
-        total_px = max(8, min(PRINTABLE_WIDTH_DOTS, mm_to_dots(item.requested_size_mm)))
+        total_px = max(8, min(int(printable_width_dots), mm_to_dots(item.requested_size_mm, dots_per_mm)))
     scale = total_px // modules
     if scale < 1:
         raise ValueError(
@@ -450,13 +517,13 @@ def _qr_tile(item: QRItem) -> tuple[Image.Image, Image.Image | None]:
     return _rotate(tile, None, item.rotation)
 
 
-def _image_tile(item: ImageItem) -> tuple[Image.Image, Image.Image | None]:
+def _image_tile(item: ImageItem, dots_per_mm: float = DOTS_PER_MM) -> tuple[Image.Image, Image.Image | None]:
     if not item.png_b64:
         return Image.new("L", (1, 1), 255), None
     raw = base64.b64decode(item.png_b64.encode("ascii"))
     img = Image.open(io.BytesIO(raw)).convert("L")
-    w = max(1, mm_to_dots(item.width_mm))
-    h = max(1, mm_to_dots(item.height_mm))
+    w = max(1, mm_to_dots(item.width_mm, dots_per_mm))
+    h = max(1, mm_to_dots(item.height_mm, dots_per_mm))
     img = ImageOps.contain(img, (w, h), method=Image.Resampling.LANCZOS)
     tile = Image.new("L", (w, h), 255)
     x = (w - img.width) // 2
@@ -465,9 +532,9 @@ def _image_tile(item: ImageItem) -> tuple[Image.Image, Image.Image | None]:
     return _rotate(tile, None, item.rotation)
 
 
-def _box_tile(item: BoxItem) -> tuple[Image.Image, Image.Image | None]:
-    w = max(1, mm_to_dots(item.width_mm))
-    h = max(1, mm_to_dots(item.height_mm))
+def _box_tile(item: BoxItem, dots_per_mm: float = DOTS_PER_MM) -> tuple[Image.Image, Image.Image | None]:
+    w = max(1, mm_to_dots(item.width_mm, dots_per_mm))
+    h = max(1, mm_to_dots(item.height_mm, dots_per_mm))
     tile = Image.new("L", (w, h), 255)
     d = ImageDraw.Draw(tile)
     width = max(1, int(item.line_dots))
@@ -475,28 +542,30 @@ def _box_tile(item: BoxItem) -> tuple[Image.Image, Image.Image | None]:
     return _rotate(tile, None, item.rotation)
 
 
-def _line_tile(item: LineItem) -> tuple[Image.Image, Image.Image | None]:
-    w = max(1, mm_to_dots(item.width_mm))
+def _line_tile(item: LineItem, dots_per_mm: float = DOTS_PER_MM) -> tuple[Image.Image, Image.Image | None]:
+    w = max(1, mm_to_dots(item.width_mm, dots_per_mm))
     h = max(1, int(item.line_dots))
     tile = Image.new("L", (w, h), 0)
     return _rotate(tile, None, item.rotation)
 
 
-def render_item_tile(item: Item) -> tuple[Image.Image, Image.Image | None]:
+def render_item_tile(
+    item: Item, dots_per_mm: float = DOTS_PER_MM, printable_width_dots: int = PRINTABLE_WIDTH_DOTS
+) -> tuple[Image.Image, Image.Image | None]:
     if isinstance(item, TextItem):
-        return _text_tile(item)
+        return _text_tile(item, dots_per_mm, printable_width_dots)
     if isinstance(item, QRItem):
-        return _qr_tile(item)
+        return _qr_tile(item, dots_per_mm, printable_width_dots)
     if isinstance(item, ImageItem):
-        return _image_tile(item)
+        return _image_tile(item, dots_per_mm)
     if isinstance(item, BoxItem):
-        return _box_tile(item)
+        return _box_tile(item, dots_per_mm)
     if isinstance(item, LineItem):
-        return _line_tile(item)
+        return _line_tile(item, dots_per_mm)
     raise TypeError(type(item))
 
 
-def image_item_from_file(path: str | Path) -> ImageItem:
+def image_item_from_file(path: str | Path, printable_width_mm: float = PRINTABLE_WIDTH_MM, one_dot_mm: float = ONE_DOT_MM) -> ImageItem:
     p = Path(path)
     img = Image.open(p).convert("RGBA")
     # Flatten alpha onto white so templates are self-contained and predictable.
@@ -506,8 +575,8 @@ def image_item_from_file(path: str | Path) -> ImageItem:
     buf = io.BytesIO()
     rgb.save(buf, format="PNG", optimize=True)
     aspect = rgb.height / max(1, rgb.width)
-    width_mm = PRINTABLE_WIDTH_MM
-    height_mm = max(ONE_DOT_MM, width_mm * aspect)
+    width_mm = max(one_dot_mm, float(printable_width_mm))
+    height_mm = max(one_dot_mm, width_mm * aspect)
     return ImageItem(
         png_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
         name=p.name,

@@ -13,7 +13,7 @@ from supvan_label_studio.print_backend import export_jpeg_exact
 
 def main() -> None:
     document = LabelDocument(auto_size=True, auto_margin_mm=3)
-    document.add(TextItem(text="SUPVAN V0.3.2", bold=True))
+    document.add(TextItem(text="SUPVAN V0.3.4", bold=True, fill_printable_band=True, rotation=90))
     document.add(BoxItem(width_mm=8, height_mm=3, y_mm=5))
     document.add(QRItem(data="https://gosseco.ca", y_mm=10))
     snapshot = document_snapshot(document)

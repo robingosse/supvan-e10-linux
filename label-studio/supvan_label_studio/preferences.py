@@ -17,7 +17,7 @@ class AppPreferences:
 
     def validate(self) -> None:
         self.queue = str(self.queue).strip() or "gosse-e10"
-        self.stock_width_mm = 12.0 if float(self.stock_width_mm) == 12.0 else 15.0
+        self.stock_width_mm = max(1.0, min(500.0, float(self.stock_width_mm)))
         self.zoom_percent = max(25, min(400, int(self.zoom_percent)))
         self.copies = max(1, min(999, int(self.copies)))
 

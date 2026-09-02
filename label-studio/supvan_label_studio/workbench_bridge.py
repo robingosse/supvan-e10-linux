@@ -9,7 +9,6 @@ from .core import (
     BoxItem,
     LabelDocument,
     LineItem,
-    PRINTABLE_WIDTH_MM,
     QRItem,
     TextItem,
 )
@@ -28,7 +27,7 @@ def _norm(value: float, total: float) -> int:
 def document_to_workbench_template(document: LabelDocument) -> tuple[dict[str, Any], list[str]]:
     """Export Studio geometry into Workbench's normalized template contract.
 
-    Studio keeps the printer-native 88-dot axis internally and displays it rotated.
+    Studio keeps the selected printer profile's native raster axis internally and displays it rotated.
     Workbench stores design coordinates left-to-right along the label and top-to-bottom
     across the printable band. The conversion here keeps that transformation in one
     integration module rather than leaking it into either application's business logic.
@@ -39,9 +38,9 @@ def document_to_workbench_template(document: LabelDocument) -> tuple[dict[str, A
         x_mm, y_mm, width_mm, height_mm = document.item_bounds_mm(item)
         element = {
             "x": _norm(y_mm, document.length_mm),
-            "y": _norm(PRINTABLE_WIDTH_MM - (x_mm + width_mm), PRINTABLE_WIDTH_MM),
+            "y": _norm(document.printable_width_mm - (x_mm + width_mm), document.printable_width_mm),
             "w": max(1, _norm(height_mm, document.length_mm)),
-            "h": max(1, _norm(width_mm, PRINTABLE_WIDTH_MM)),
+            "h": max(1, _norm(width_mm, document.printable_width_mm)),
         }
         if isinstance(item, TextItem):
             lines = max(1, (item.text or "").count("\n") + 1)
@@ -49,7 +48,7 @@ def document_to_workbench_template(document: LabelDocument) -> tuple[dict[str, A
                 {
                     "kind": "text",
                     "source": item.text,
-                    "font_permille": max(25, min(500, _norm(item.size_mm, PRINTABLE_WIDTH_MM))),
+                    "font_permille": max(25, min(500, _norm(item.size_mm, document.printable_width_mm))),
                     "bold": bool(item.bold),
                     "italic": False,
                     "underline": False,
@@ -57,6 +56,7 @@ def document_to_workbench_template(document: LabelDocument) -> tuple[dict[str, A
                     "align": "left",
                     "max_lines": lines,
                     "autofit_height": bool(item.autofit_height),
+                    "fill_printable_band": bool(item.fill_printable_band),
                 }
             )
         elif isinstance(item, QRItem):
@@ -123,7 +123,7 @@ def load_workbench_session(path: str | Path) -> WorkbenchSession:
             length_mm=float(data.get("length_mm", 50.0)),
             stock_width_mm=float(data.get("stock_width_mm", 15.0)),
             queue=str(data.get("queue") or "gosse-e10"),
-            auto_size=bool(data.get("auto_size", False)),
+            auto_size=bool(data.get("auto_size", True)),
         )
 
     result_value = data.get("result_path") or request_path.with_suffix(".result.json")

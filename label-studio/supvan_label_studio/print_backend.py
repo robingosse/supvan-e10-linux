@@ -7,7 +7,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .core import LabelDocument, PRINTABLE_WIDTH_DOTS
+from .core import LabelDocument
+from .printer_profiles import PrinterProfile, profile_for_queue
 
 
 class PrintError(RuntimeError):
@@ -31,10 +32,11 @@ class PrinterPreflight:
 
 
 def export_png(doc: LabelDocument, path: str | Path) -> Path:
-    """Export the exact device raster: 88 dots across by N feed dots."""
+    """Export the document raster with physical DPI metadata for CUPS."""
     path = Path(path)
     img = doc.render()
-    img.save(path, format="PNG", optimize=True)
+    dpi = max(25, int(round(doc.dots_per_mm * 25.4)))
+    img.save(path, format="PNG", optimize=True, dpi=(dpi, dpi))
     return path
 
 
@@ -47,8 +49,11 @@ def export_jpeg_exact(doc: LabelDocument, path: str | Path) -> Path:
     """
     path = Path(path)
     img = doc.render().convert("L")
-    if img.width != PRINTABLE_WIDTH_DOTS:
-        raise PrintError(f"internal raster width is {img.width}, expected {PRINTABLE_WIDTH_DOTS}")
+    if img.width != doc.printable_width_dots:
+        raise PrintError(f"internal raster width is {img.width}, expected {doc.printable_width_dots}")
+    # Grayscale JPEG has no chroma subsampling.  Quality 100 keeps the already
+    # pixel-aligned QR/text artwork effectively lossless for the driver's final
+    # 1-bit dithering stage while preserving the proven image/jpeg CUPS path.
     img.save(path, format="JPEG", quality=100, optimize=False)
     return path
 
@@ -126,8 +131,14 @@ def print_document(
     queue: str | None = None,
     copies: int = 1,
     job_name: str = "SUPVAN Label Studio",
+    profile: PrinterProfile | None = None,
 ) -> str:
-    """Submit Label Studio's exact raster through the proven JPEG pass-through."""
+    """Submit a label through the system CUPS spooler.
+
+    The E10 validated profile keeps the proven exact-width JPEG pass-through.
+    Other configured printers use a DPI-tagged PNG and optional CUPS media/options
+    from their printer profile. Geometry remains explicit profile truth.
+    """
     if shutil.which("lp") is None:
         raise PrintError("CUPS command 'lp' was not found")
     queue = (queue or doc.queue or "gosse-e10").strip()
@@ -136,25 +147,42 @@ def print_document(
     if not _queue_exists(queue):
         raise PrintError(f"CUPS queue '{queue}' does not exist")
     copies = max(1, min(999, int(copies)))
+    profile = profile or profile_for_queue(queue, doc.stock_width_mm)
 
     with tempfile.TemporaryDirectory(prefix="supvan-label-") as td:
-        jpeg = Path(td) / "label-studio-exact.jpg"
-        export_jpeg_exact(doc, jpeg)
-        cmd = ["lp", "-d", queue, "-n", str(copies), "-t", job_name, str(jpeg)]
+        td_path = Path(td)
+        if profile and profile.transport == "e10-exact-jpeg":
+            artifact = td_path / "label-studio-exact.jpg"
+            export_jpeg_exact(doc, artifact)
+        else:
+            artifact = td_path / "label-studio-raster.png"
+            export_png(doc, artifact)
+
+        cmd = ["lp", "-d", queue, "-n", str(copies), "-t", job_name]
+        if profile:
+            if profile.media:
+                cmd.extend(["-o", f"media={profile.media}"])
+            for option in profile.cups_options:
+                cmd.extend(["-o", option])
+        cmd.append(str(artifact))
         proc = subprocess.run(cmd, text=True, capture_output=True)
         if proc.returncode != 0:
             details = (proc.stderr or proc.stdout or "unknown CUPS error").strip()
-            raise PrintError(f"CUPS rejected the JPEG job.\n\n{details}")
+            raise PrintError(f"CUPS rejected the print job.\n\n{details}")
 
         out = (proc.stdout or "Print job submitted.").strip()
         m = re.search(r"request id is\s+(\S+)", out, flags=re.IGNORECASE)
         job_id = m.group(1) if m else None
         length_dots = doc.render().height
-        length_mm = length_dots / 8.0
+        length_mm = length_dots / doc.dots_per_mm
+        profile_note = profile.name if profile else "unconfigured CUPS profile"
         suffix = (
-            f"\nExact E10 raster: {PRINTABLE_WIDTH_DOTS} × {length_dots} dots "
-            f"({length_mm:g} mm long)."
+            f"\nRaster: {doc.printable_width_dots} × {length_dots} dots "
+            f"({doc.printable_width_mm:.3f} mm usable × {length_mm:g} mm long)."
+            f"\nProfile: {profile_note}"
         )
+        if profile and not profile.verified:
+            suffix += " · GEOMETRY UNVERIFIED"
         if job_id:
             suffix += f"\nCUPS job: {job_id}"
         if copies != 1:

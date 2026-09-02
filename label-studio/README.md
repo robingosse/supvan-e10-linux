@@ -1,55 +1,78 @@
-# SUPVAN Label Studio v0.3.2
+# SUPVAN Label Studio v0.3.4
 
-Linux-native workstation editor for designing and printing continuous labels on
-Robin's SUPVAN E10.
+Linux-native continuous-label editor built around Robin's SUPVAN E10, with a
+printer-profile layer for adapting the same editor to other properly installed
+CUPS printers.
 
-Version 0.3.2 is a workstation-polish, multiline-text, and Workbench//OS integration release. It preserves the physically proven E10 print architecture while making the editor easier on the eyes and easier to extend.
+## v0.3.4 — continuous tape model
 
-## What changed in v0.3.2
+The normal E10 workflow is now modeled correctly as **15 mm continuous tape**,
+not a fixed-size 15×N card. The physical width stays fixed while the feed length
+grows to fit the content.
 
-### Gentler workstation theme
+### Standard text behaviour
 
-- Soft blue-on-blue panels and chrome.
-- Clearly raised buttons with hover, pressed, and disabled states.
-- Cream input fields, text editors, tape stock, and printable canvas.
-- Warm off-white text on the darker header and action buttons.
-- Softer layer selection, scrollbars, separators, and status bar.
+New text defaults to **90°**, which is the normal along-the-tape reading
+orientation in Studio's internal raster. Rotation remains editable at 0°, 90°,
+180°, or 270° for exceptions.
 
-### Calmer three-part workspace
+The default text sizing mode is:
 
-- Label tools and stock/printer controls live on the left.
-- The horizontal tape canvas remains the centre of the editor.
-- Precise object properties and layer controls live on the right.
-- The header contains only document history and the primary print action.
+- **Continuous tape · fill printable band** — text uses the active printer
+  profile's usable across-tape band. Two or three explicit lines share that
+  vertical band, while the longest line determines how much tape is consumed.
+  A longer message therefore makes a longer label instead of shrinking the font.
+- **Fit within Height** — keeps a user-specified multiline block height.
+- **Manual Height** — explicit manual sizing.
 
-### Safer editing
+Use Enter in the text editor to create the normal two- or three-line labels.
 
-- Undo and redo with a 100-edit history.
-- Unsaved-change prompts before New, Open, or Exit.
-- Dirty-document indicator in the window title.
-- Persistent workstation preferences for queue, stock width, zoom, copies, and recent working directories.
-- Unique object IDs even after objects are deleted and added again.
-- Existing v0.1/v0.2 `.supvanlabel` documents remain readable.
+For the validated E10 Linux path, physical media truth is currently:
 
-### Better design controls
+- tape width: **15.0 mm**
+- verified printable band: **88 dots / 8 dots per mm = 11.0 mm**
+- length: **automatic from content** by default, up to the configured continuous
+  roll limit
+- normal text orientation: **90°**
 
-- Layer list with send-back and bring-forward controls.
-- Exact Across and Along position controls in millimetres.
-- 0°, 90°, 180°, and 270° rotation.
-- Top, centre, and bottom alignment within the verified printable band.
-- Editable box/line thickness.
-- Double-click an object to edit it.
-- Keyboard nudging remains exact: Arrow = one 0.125 mm printer dot; Shift+Arrow = 1 mm.
-- Long-label preview is capped to a safe GTK canvas width while the exported and printed raster retains its full resolution.
+The E10 manufacturer's larger nominal print-width claim is not silently treated
+as verified raster width. If a wider E10 raster is physically proven later, it
+can replace the printer profile without changing the editor model.
 
-### Text autofit
+### Automatic length
 
-- **Autofit to height** is available in Add Text and Edit Text.
-- The Height value becomes the total multiline text-block height when Autofit is enabled.
-- One line uses the available height; two lines shrink to roughly half-height each; three lines to roughly one-third, with actual font metrics used to prevent clipping.
-- Existing documents remain manual-height by default for compatibility.
+Auto length is enabled by default. New content starts with the configured padding,
+and the document feed length is recalculated from rendered object bounds plus end
+padding. Editing a line from `BIN A` to a long description therefore increases
+the tape length automatically.
 
-### Workbench//OS handoff
+Manual fixed length remains available for the uncommon cases where an exact label
+length is required.
+
+## Printer/media profiles + CUPS
+
+Studio uses the Linux system print spooler rather than inventing a private printer
+stack:
+
+- queues are discovered through CUPS (`lpstat`);
+- driver/media choices and advertised resolution are inspected with `lpoptions`
+  when available;
+- **Printer / Media Setup** stores stock width, usable printable width, resolution,
+  optional CUPS media options, and physical verification state per queue;
+- Studio never fabricates printable margins when CUPS does not report them;
+- the validated E10 route uses the proven exact-width JPEG transport;
+- configured non-E10 queues use a DPI-tagged PNG through CUPS.
+
+The built-in verified E10 profile is now canonical **15 mm stock**. Generic/custom
+printer profiles remain free to use different physical media widths.
+
+User printer profiles are stored at:
+
+```text
+~/.config/supvan-label-studio/printer-profiles.json
+```
+
+## Workbench//OS
 
 Workbench can launch Studio with:
 
@@ -57,38 +80,20 @@ Workbench can launch Studio with:
 supvan-label-studio --workbench-request /path/to/request.json
 ```
 
-The request uses format `WORKBENCH-SUPVAN-STUDIO-1` and may contain a native document snapshot, document path, job/context identifiers, and a result path. Studio shows **Return to Workbench** for such sessions and writes a `WORKBENCH-SUPVAN-STUDIO-RESULT-1` result containing the native document plus a normalized `GOSSIE-LABEL-TEMPLATE-1` export for supported text, QR, and line objects. Unsupported object types are reported explicitly rather than silently discarded.
+The `WORKBENCH-SUPVAN-STUDIO-1` / `WORKBENCH-SUPVAN-STUDIO-RESULT-1` handoff
+remains intact. Workbench owns product/build/serial/QC truth and production print
+records; Studio owns interactive label authoring. New Workbench authoring requests
+default to continuous auto-length unless the request explicitly asks for fixed
+length.
 
-The bridge is intentionally file/CLI based so Workbench remains the owner of product/order/build/serial/QC identity and Studio remains the owner of interactive label authoring.
+## Interface
 
-### Printer workflow
+The workstation UI retains the blue-on-blue / cream design system, rounded raised
+buttons, three-panel editor, layers, undo/redo, direct positioning, printer
+preflight, file association, preferences, and desktop launcher integration.
 
-- Detects local CUPS queues instead of relying only on `gosse-e10`.
-- Prefers the saved queue, then the system default, then an E10/SUPVAN-like queue.
-- Printer Check explains missing, disabled, or unavailable queues.
-- Print confirmation shows queue, copy count, physical label size, and exact raster dimensions.
-- Multiple copies are submitted through CUPS.
-
-### Desktop integration
-
-- Application icon and Applications-menu launcher.
-- `.supvanlabel` file association.
-- Opening a label file from the file manager launches it in Studio.
-- Uninstall keeps preferences and saved labels.
-
-## Print architecture — intentionally unchanged
-
-Label Studio contains no Bluetooth/T15 protocol code. It renders the exact device raster and submits it to CUPS as a grayscale JPEG.
-
-- Printable raster: **88 dots across × N feed dots**
-- Resolution: **8 dots/mm**
-- Printable width: **11 mm**
-- Supported stock visualization: **12 mm or 15 mm**
-- Supported document length: **5 mm to 6000 mm**
-
-The companion Rust E10 service owns Bluetooth discovery/recovery, material checks, job locking, and the two-buffer T15 transfer. The service recognizes an exactly 88-pixel-wide JPEG as a Label Studio continuous-length raster.
-
-Use the preserved `supvan-cups-e10-public-r17` backend or a later compatible build. Do not replace it with the upstream generic driver unless that build also contains the 88-pixel exact-raster convention.
+The centre canvas shows the 15 mm tape horizontally, with the verified printable
+band centered inside it.
 
 ## Install on Linux Mint / Ubuntu
 
@@ -98,24 +103,25 @@ Install dependencies once:
 sudo apt install python3-gi gir1.2-gtk-3.0 python3-cairo python3-pil python3-qrcode cups-client fonts-dejavu-core shared-mime-info
 ```
 
-From the extracted release folder:
+Then use the self-extracting `.run` installer, or from the source folder:
 
 ```bash
 ./install.sh
 ```
 
-Then launch **SUPVAN Label Studio** from the Applications menu.
-
-The installer writes only to the current user's `~/.local` directories. It does not need sudo and does not remove saved labels or preferences.
+The installer writes only to the current user's `~/.local` directories and
+preserves saved labels/preferences across upgrades.
 
 ## Tests
 
 ```bash
 PYTHONPATH=. python3 -m pytest -q
-python3 scripts/self-test.py
+PYTHONPATH=. python3 scripts/self-test.py
 ```
 
-The v0.3.2 source release contains 23 tests covering exact raster geometry, continuous lengths, QR sizing, template round-trips, auto-size behaviour, unique IDs, alignment, layer ordering, undo/redo, preferences, queue discovery, JPEG export, CUPS copy submission, text Autofit, and Workbench handoff.
+v0.3.4 contains **34 automated tests**, including explicit coverage that 90°
+continuous text keeps the same physical print-band width while longer messages
+produce longer feed rasters.
 
 ## Uninstall
 
@@ -123,4 +129,4 @@ The v0.3.2 source release contains 23 tests covering exact raster geometry, cont
 ./uninstall.sh
 ```
 
-This removes the application, launcher, icon, and MIME registration. Preferences and `.supvanlabel` documents remain.
+Preferences, printer profiles, and `.supvanlabel` documents are retained.

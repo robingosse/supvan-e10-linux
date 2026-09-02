@@ -36,7 +36,7 @@ jobs:
         run: PYTHONPATH=. python -m pytest -q
       - name: Exact-raster self-test
         run: PYTHONPATH=. python scripts/self-test.py
-      - name: Build v0.3.2 source and self-extracting installer
+      - name: Build source and self-extracting installer
         shell: bash
         run: |
           set -euo pipefail

@@ -10,7 +10,7 @@ except Exception:
     raise
 
 from .core import (
-    BoxItem, ImageItem, LineItem, MAX_LENGTH_MM, ONE_DOT_MM, PRINTABLE_WIDTH_MM,
+    BoxItem, ImageItem, LineItem, MAX_LENGTH_MM,
     QRItem, TextItem, image_item_from_file, qr_safe_module_scale,
 )
 from .history import document_from_snapshot, document_snapshot
@@ -136,7 +136,12 @@ class MainWindowEditMixin:
             return
         self._syncing = True
         try:
-            self.stock_combo.set_active(1 if self.doc.stock_width_mm == 12.0 else 0)
+            self.stock_spin.set_value(self.doc.stock_width_mm)
+            self.across_spin.set_range(0.0, self.doc.printable_width_mm)
+            self.across_spin.set_increments(self.doc.one_dot_mm, 1.0)
+            self.along_spin.set_increments(self.doc.one_dot_mm, 1.0)
+            self.length_spin.set_increments(self.doc.one_dot_mm, 1.0)
+            self.margin_spin.set_increments(self.doc.one_dot_mm, 1.0)
             self.auto_check.set_active(self.doc.auto_size)
             self.length_spin.set_value(self.doc.length_mm)
             self.length_spin.set_sensitive(not self.doc.auto_size)
@@ -231,9 +236,9 @@ class MainWindowEditMixin:
         if self._syncing:
             return
         before = self.snapshot()
-        text = widget.get_active_text() or "15 mm"
-        self.doc.stock_width_mm = 12.0 if text.startswith("12") else 15.0
+        self.doc.stock_width_mm = float(widget.get_value())
         self.preferences.stock_width_mm = self.doc.stock_width_mm
+        self.doc.validate()
         self.finish_edit(before, refresh_layers=False)
 
     def zoom_changed(self, widget):
@@ -252,6 +257,10 @@ class MainWindowEditMixin:
         if queue:
             self.doc.queue = queue
             self.preferences.queue = queue
+            if hasattr(self, "refresh_printer_profile"):
+                self.refresh_printer_profile()
+            self.sync_document_controls()
+            self.sync_selection_controls()
         self.update_status()
 
     def copies_changed(self, widget):
@@ -296,7 +305,8 @@ class MainWindowEditMixin:
     def next_y(self, height_mm=4.0):
         bounds = self.doc.content_bounds_mm()
         if bounds is None:
-            return 1.0
+            # Continuous labels use the same padding at the leading and trailing ends.
+            return self.doc.auto_margin_mm if self.doc.auto_size else 1.0
         bottom = bounds[1] + bounds[3]
         maximum = MAX_LENGTH_MM if self.doc.auto_size else self.doc.length_mm
         return min(max(0.0, bottom + 1.0), max(0.0, maximum - height_mm))
@@ -308,24 +318,32 @@ class MainWindowEditMixin:
         self.finish_edit(before)
 
     def add_text(self, *_):
+        continuous_label = f"Continuous tape · fill {self.doc.printable_width_mm:.3f} mm printable band"
         result = self.text_dialog(
             "Add Text",
             [
-                ("text", "Text", "multiline", "Label text"),
-                ("size", "Height (mm)", "spin", 3.0),
-                ("autofit_height", "Autofit to height", "check", True),
+                ("text", "Text (use Enter for 2–3 lines)", "multiline", "Label text"),
+                ("size", "Height limit (mm; fit/manual modes)", "spin", 3.0),
+                ("sizing", "Sizing", "combo", ([
+                    continuous_label,
+                    "Fit within Height",
+                    "Manual Height",
+                ], continuous_label)),
                 ("family", "Font family", "entry", "DejaVu Sans"),
                 ("bold", "Bold", "check", False),
             ],
         )
         if result:
+            continuous = result["sizing"].startswith("Continuous tape")
             self.add_and_select(
                 TextItem(
                     text=result["text"],
                     size_mm=result["size"],
-                    autofit_height=result["autofit_height"],
+                    autofit_height=result["sizing"] != "Manual Height",
+                    fill_printable_band=continuous,
                     family=result["family"],
                     bold=result["bold"],
+                    rotation=self.doc.default_text_rotation,
                     y_mm=self.next_y(4),
                 )
             )
@@ -341,9 +359,9 @@ class MainWindowEditMixin:
         if not result:
             return
         try:
-            modules, scale = qr_safe_module_scale(result["data"], result["ecc"])
+            modules, scale = qr_safe_module_scale(result["data"], result["ecc"], printable_width_dots=self.doc.printable_width_dots)
             if scale < 1:
-                raise ValueError("QR payload is too long for the E10 printable width.")
+                raise ValueError("QR payload is too dense for the current printer profile.")
             if scale == 1:
                 self.show_info(
                     "Dense QR warning",
@@ -354,7 +372,8 @@ class MainWindowEditMixin:
                     data=result["data"],
                     ecc=result["ecc"],
                     full_width=True,
-                    y_mm=self.next_y(PRINTABLE_WIDTH_MM),
+                    requested_size_mm=self.doc.printable_width_mm,
+                    y_mm=self.next_y(self.doc.printable_width_mm),
                 )
             )
         except Exception as error:
@@ -380,7 +399,7 @@ class MainWindowEditMixin:
             return
         try:
             self.preferences.last_open_directory = str(Path(filename).parent)
-            item = image_item_from_file(filename)
+            item = image_item_from_file(filename, self.doc.printable_width_mm, self.doc.one_dot_mm)
             item.y_mm = self.next_y(item.height_mm)
             self.add_and_select(item)
         except Exception as error:
@@ -391,7 +410,7 @@ class MainWindowEditMixin:
 
     def add_line(self, *_):
         self.add_and_select(
-            LineItem(width_mm=PRINTABLE_WIDTH_MM, y_mm=self.next_y(ONE_DOT_MM))
+            LineItem(width_mm=self.doc.printable_width_mm, y_mm=self.next_y(self.doc.one_dot_mm))
         )
 
     def edit_selected(self, *_):
@@ -405,8 +424,15 @@ class MainWindowEditMixin:
                     "Edit Text",
                     [
                         ("text", "Text", "multiline", item.text),
-                        ("size", "Height (mm)", "spin", item.size_mm),
-                        ("autofit_height", "Autofit to height", "check", item.autofit_height),
+                        ("size", "Height limit (mm; fit/manual modes)", "spin", item.size_mm),
+                        ("sizing", "Sizing", "combo", ([
+                            f"Continuous tape · fill {self.doc.printable_width_mm:.3f} mm printable band",
+                            "Fit within Height",
+                            "Manual Height",
+                        ], (
+                            f"Continuous tape · fill {self.doc.printable_width_mm:.3f} mm printable band"
+                            if item.fill_printable_band else ("Fit within Height" if item.autofit_height else "Manual Height")
+                        ))),
                         ("family", "Font family", "entry", item.family),
                         ("bold", "Bold", "check", item.bold),
                     ],
@@ -415,7 +441,8 @@ class MainWindowEditMixin:
                     return
                 item.text = result["text"]
                 item.size_mm = result["size"]
-                item.autofit_height = result["autofit_height"]
+                item.autofit_height = result["sizing"] != "Manual Height"
+                item.fill_printable_band = result["sizing"].startswith("Continuous tape")
                 item.family = result["family"]
                 item.bold = result["bold"]
             elif isinstance(item, QRItem):
@@ -428,9 +455,9 @@ class MainWindowEditMixin:
                 )
                 if not result:
                     return
-                modules, scale = qr_safe_module_scale(result["data"], result["ecc"])
+                modules, scale = qr_safe_module_scale(result["data"], result["ecc"], printable_width_dots=self.doc.printable_width_dots)
                 if scale < 1:
-                    raise ValueError("QR payload is too long for the E10 printable width.")
+                    raise ValueError("QR payload is too dense for the current printer profile.")
                 item.data = result["data"]
                 item.ecc = result["ecc"]
                 if scale == 1:
@@ -448,7 +475,7 @@ class MainWindowEditMixin:
                 )
                 if not result:
                     return
-                item.width_mm = min(PRINTABLE_WIDTH_MM, result["width"])
+                item.width_mm = min(self.doc.printable_width_mm, result["width"])
                 item.height_mm = result["height"]
             elif isinstance(item, BoxItem):
                 result = self.text_dialog(
@@ -461,7 +488,7 @@ class MainWindowEditMixin:
                 )
                 if not result:
                     return
-                item.width_mm = min(PRINTABLE_WIDTH_MM, result["width"])
+                item.width_mm = min(self.doc.printable_width_mm, result["width"])
                 item.height_mm = result["height"]
                 item.line_dots = result["line"]
             elif isinstance(item, LineItem):
@@ -474,7 +501,7 @@ class MainWindowEditMixin:
                 )
                 if not result:
                     return
-                item.width_mm = min(PRINTABLE_WIDTH_MM, result["width"])
+                item.width_mm = min(self.doc.printable_width_mm, result["width"])
                 item.line_dots = result["line"]
             self.doc.clamp_item(item, allow_length_extend=self.doc.auto_size)
             if self.doc.auto_size:

@@ -10,14 +10,14 @@ except Exception:
     raise
 
 from .canvas import LabelCanvas
-from .core import LabelDocument, MAX_LENGTH_MM, ONE_DOT_MM, PRINTABLE_WIDTH_MM
+from .core import LabelDocument, MAX_LENGTH_MM, ONE_DOT_MM
 from .history import DocumentHistory, document_snapshot
 from .preferences import AppPreferences, load_preferences
 from .theme import THEME_CSS
 from .workbench_bridge import WorkbenchSession
 
 APP_NAME = "SUPVAN Label Studio"
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.4"
 APP_TITLE = f"{APP_NAME} {APP_VERSION}"
 
 
@@ -157,16 +157,12 @@ class MainWindowLayoutMixin:
         panel.pack_start(tool_grid, False, False, 0)
 
         panel.pack_start(self.section_title("LABEL STOCK"), False, False, 0)
-        stock_row = Gtk.Box(spacing=6)
-        stock_row.pack_start(Gtk.Label(label="Width", xalign=0), True, True, 0)
-        self.stock_combo = Gtk.ComboBoxText()
-        self.stock_combo.append_text("15 mm")
-        self.stock_combo.append_text("12 mm")
-        self.stock_combo.connect("changed", self.stock_changed)
-        stock_row.pack_end(self.stock_combo, False, False, 0)
-        panel.pack_start(stock_row, False, False, 0)
+        self.stock_spin = Gtk.SpinButton.new_with_range(1.0, 500.0, 0.125)
+        self.stock_spin.set_digits(3)
+        self.stock_spin.connect("value-changed", self.stock_changed)
+        panel.pack_start(self.labeled_control("Tape width (mm)", self.stock_spin), False, False, 0)
 
-        self.auto_check = Gtk.CheckButton(label="Fit length to contents")
+        self.auto_check = Gtk.CheckButton(label="Auto length from contents (recommended)")
         self.auto_check.connect("toggled", self.auto_size_changed)
         panel.pack_start(self.auto_check, False, False, 0)
 
@@ -178,7 +174,7 @@ class MainWindowLayoutMixin:
         self.margin_spin = Gtk.SpinButton.new_with_range(0.0, 100.0, ONE_DOT_MM)
         self.margin_spin.set_digits(3)
         self.margin_spin.connect("value-changed", self.margin_changed)
-        panel.pack_start(self.labeled_control("End margin", self.margin_spin), False, False, 0)
+        panel.pack_start(self.labeled_control("End padding (mm)", self.margin_spin), False, False, 0)
         panel.pack_start(self.button("Fit Contents Now", self.fit_contents), False, False, 0)
 
         panel.pack_start(self.section_title("VIEW"), False, False, 0)
@@ -192,17 +188,22 @@ class MainWindowLayoutMixin:
         self.queue_combo = Gtk.ComboBoxText.new_with_entry()
         self.queue_combo.get_child().connect("changed", self.queue_changed)
         panel.pack_start(self.queue_combo, False, False, 0)
+        self.printer_profile_label = Gtk.Label(label="Printer geometry: detecting…", xalign=0)
+        self.printer_profile_label.set_line_wrap(True)
+        self.printer_profile_label.get_style_context().add_class("muted")
+        panel.pack_start(self.printer_profile_label, False, False, 0)
         printer_buttons = Gtk.Box(spacing=6)
         printer_buttons.pack_start(self.button("Refresh", self.refresh_queues), True, True, 0)
         printer_buttons.pack_start(self.button("Printer Check", self.printer_check), True, True, 0)
         panel.pack_start(printer_buttons, False, False, 0)
+        panel.pack_start(self.button("Printer / Media Setup", self.printer_setup), False, False, 0)
         self.copies_spin = Gtk.SpinButton.new_with_range(1, 999, 1)
         self.copies_spin.set_digits(0)
         self.copies_spin.connect("value-changed", self.copies_changed)
         panel.pack_start(self.labeled_control("Copies", self.copies_spin), False, False, 0)
 
         hint = Gtk.Label(
-            label="Tape runs left → right. Arrow keys move one printer dot; Shift+Arrow moves 1 mm.",
+            label="15 mm continuous tape runs left → right. New text defaults to 90° and grows the label length instead of shrinking long words. Arrow keys move one printer dot; Shift+Arrow moves 1 mm.",
             xalign=0,
         )
         hint.set_line_wrap(True)
@@ -220,7 +221,7 @@ class MainWindowLayoutMixin:
         self.selected_label.set_ellipsize(3)
         panel.pack_start(self.selected_label, False, False, 0)
 
-        self.across_spin = Gtk.SpinButton.new_with_range(0, PRINTABLE_WIDTH_MM, ONE_DOT_MM)
+        self.across_spin = Gtk.SpinButton.new_with_range(0, self.doc.printable_width_mm, self.doc.one_dot_mm)
         self.across_spin.set_digits(3)
         self.across_spin.connect("value-changed", self.position_changed)
         panel.pack_start(self.labeled_control("Across (mm)", self.across_spin), False, False, 0)

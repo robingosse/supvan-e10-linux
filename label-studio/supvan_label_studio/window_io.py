@@ -13,6 +13,7 @@ from .core import LabelDocument, MAX_LENGTH_MM, ONE_DOT_MM
 from .history import document_snapshot
 from .preferences import save_preferences
 from .print_backend import export_png
+from .printer_profiles import apply_profile_to_document, profile_for_queue
 from .window_layout import APP_TITLE
 
 
@@ -44,6 +45,9 @@ class MainWindowIOMixin:
             stock_width_mm=self.preferences.stock_width_mm,
             queue=self.preferences.queue,
         )
+        profile = profile_for_queue(self.doc.queue, self.doc.stock_width_mm)
+        if profile is not None:
+            apply_profile_to_document(self.doc, profile)
         self.current_path = None
         self.history.reset()
         self.saved_snapshot = self.snapshot()
@@ -157,7 +161,8 @@ class MainWindowIOMixin:
             self.preferences.last_export_directory = str(path.parent)
             self.show_info(
                 "Exported exact raster",
-                f"88 × {self.doc.render().height} dots\n\n{path}",
+                f"{self.doc.printable_width_dots} × {self.doc.render().height} dots\n"
+                f"{self.doc.printable_width_mm:.3f} mm usable width\n\n{path}",
             )
         except Exception as error:
             self.show_error("Export failed", str(error))
@@ -183,7 +188,7 @@ class MainWindowIOMixin:
                 widget.set_size_request(440, 110)
                 widget.get_buffer().set_text(str(default))
             elif kind == "spin":
-                widget = Gtk.SpinButton.new_with_range(0.125, MAX_LENGTH_MM, ONE_DOT_MM)
+                widget = Gtk.SpinButton.new_with_range(self.doc.one_dot_mm, MAX_LENGTH_MM, self.doc.one_dot_mm)
                 widget.set_digits(3)
                 widget.set_value(float(default))
             elif kind == "integer":
@@ -288,8 +293,9 @@ class MainWindowIOMixin:
         mode = "auto length" if self.doc.auto_size else "manual length"
         queue = self.queue_text() if hasattr(self, "queue_combo") else self.doc.queue
         self.status.set_text(
-            f"{self.doc.stock_width_mm:g} × {self.doc.length_mm:g} mm • {mode} • "
-            f"88-dot printable band • Queue: {queue or 'none'} • {selected}"
+            f"{self.doc.stock_width_mm:g} mm tape × {self.doc.length_mm:g} mm long • {mode} • "
+            f"{self.doc.printable_width_dots}-dot / {self.doc.printable_width_mm:.3f} mm printable band • "
+            f"Queue: {queue or 'none'} • {selected}"
         )
 
     def on_window_key(self, _widget, event):

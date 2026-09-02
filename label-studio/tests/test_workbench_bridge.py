@@ -22,6 +22,7 @@ def test_workbench_template_export_contains_autofit():
     assert text["source"] == "ONE\nTWO"
     assert text["max_lines"] == 2
     assert text["autofit_height"] is True
+    assert text["fill_printable_band"] is False
 
 
 def test_workbench_request_result_roundtrip(tmp_path: Path):

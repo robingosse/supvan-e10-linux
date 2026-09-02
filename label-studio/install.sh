@@ -44,6 +44,6 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
 fi
 
 echo "SUPVAN Label Studio installed."
-echo "Version: 0.3.2"
+echo "Version: 0.3.4"
 echo "Launch from the Mint menu or run: supvan-label-studio"
 echo "If ~/.local/bin is not in PATH, run: $BINDIR/supvan-label-studio"

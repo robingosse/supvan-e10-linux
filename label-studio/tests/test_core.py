@@ -56,6 +56,7 @@ def test_auto_size_tracks_content_and_margin():
     d = LabelDocument(length_mm=50, auto_size=True, auto_margin_mm=3)
     q = QRItem(data="HELLO", y_mm=20)
     d.add(q)
+    # Full-width QR is 11 mm long in feed direction, plus 3 mm end margin.
     assert d.length_mm == 34.0
 
 
@@ -112,3 +113,64 @@ def test_text_manual_multiline_can_exceed_single_line_height():
     fitted_tile, _ = render_item_tile(fitted)
     assert fitted_tile.height == mm_to_dots(4.0)
     assert manual_tile.height > fitted_tile.height
+
+
+def test_fill_printable_band_uses_document_raster_width():
+    d = LabelDocument(length_mm=50, auto_size=False, printable_width_dots=96, dots_per_mm=8.0)
+    item = TextItem(text="ONE\nTWO", size_mm=3.0, autofit_height=True, fill_printable_band=True)
+    tile, _ = render_item_tile(item, d.dots_per_mm, d.printable_width_dots)
+    assert tile.width == 96
+    rotated, _ = render_item_tile(TextItem(text="ONE\nTWO", fill_printable_band=True, rotation=90), d.dots_per_mm, d.printable_width_dots)
+    assert rotated.width == 96
+    assert d.printable_width_mm == 12.0
+
+
+def test_custom_printer_geometry_roundtrips():
+    d = LabelDocument(
+        length_mm=50, auto_size=False, printable_width_dots=144,
+        dots_per_mm=12.0, printer_profile_key="custom-300dpi",
+    )
+    restored = LabelDocument.from_dict(d.to_dict())
+    assert restored.printable_width_dots == 144
+    assert restored.dots_per_mm == 12.0
+    assert restored.printable_width_mm == 12.0
+    assert restored.printer_profile_key == "custom-300dpi"
+
+
+def test_continuous_text_90_uses_full_band_and_grows_along_tape():
+    short = TextItem(text="SHORT", fill_printable_band=True, rotation=90)
+    long = TextItem(text="THIS IS A MUCH LONGER MESSAGE", fill_printable_band=True, rotation=90)
+    short_tile, _ = render_item_tile(short)
+    long_tile, _ = render_item_tile(long)
+    assert short_tile.width == PRINTABLE_WIDTH_DOTS
+    assert long_tile.width == PRINTABLE_WIDTH_DOTS
+    assert long_tile.height > short_tile.height
+
+
+def test_continuous_multiline_shares_printable_band_instead_of_fixed_length():
+    two_lines = TextItem(text="FIRST LINE\nSECOND LINE", fill_printable_band=True, rotation=90)
+    three_lines = TextItem(text="FIRST LINE\nSECOND LINE\nTHIRD", fill_printable_band=True, rotation=90)
+    two_tile, _ = render_item_tile(two_lines)
+    three_tile, _ = render_item_tile(three_lines)
+    assert two_tile.width == PRINTABLE_WIDTH_DOTS
+    assert three_tile.width == PRINTABLE_WIDTH_DOTS
+    # Both consume the same physical across-tape print band; feed length follows text.
+    assert two_tile.height > 0
+    assert three_tile.height > 0
+
+
+def test_auto_length_increases_for_longer_continuous_message():
+    short = LabelDocument(auto_size=True, auto_margin_mm=3.0)
+    short.add(TextItem(text="BIN A", fill_printable_band=True, rotation=90, y_mm=3.0))
+    long = LabelDocument(auto_size=True, auto_margin_mm=3.0)
+    long.add(TextItem(text="BIN A — LONGER DESCRIPTION FOR THE DRAWER", fill_printable_band=True, rotation=90, y_mm=3.0))
+    assert long.length_mm > short.length_mm
+    assert short.stock_width_mm == 15.0
+    assert long.stock_width_mm == 15.0
+
+
+def test_standard_new_text_rotation_is_90_and_roundtrips():
+    d = LabelDocument()
+    assert d.default_text_rotation == 90
+    restored = LabelDocument.from_dict(d.to_dict())
+    assert restored.default_text_rotation == 90
