@@ -7,16 +7,22 @@ if [[ -z "$ARCHIVE_LINE" ]]; then
   exit 2
 fi
 
-PAYLOAD_DIR="$(mktemp -d -t supvan-label-studio-v032.XXXXXX)"
+PAYLOAD_DIR="$(mktemp -d -t supvan-label-studio.XXXXXX)"
 cleanup() {
-  if [[ -n "${PAYLOAD_DIR:-}" && -d "$PAYLOAD_DIR" && "$PAYLOAD_DIR" == /tmp/supvan-label-studio-v032.* ]]; then
+  if [[ -n "${PAYLOAD_DIR:-}" && -d "$PAYLOAD_DIR" && "$PAYLOAD_DIR" == /tmp/supvan-label-studio.* ]]; then
     rm -rf -- "$PAYLOAD_DIR"
   fi
 }
 trap cleanup EXIT
 
 tail -n +"$ARCHIVE_LINE" "$0" | tar -xzf - -C "$PAYLOAD_DIR"
-"$PAYLOAD_DIR/supvan-label-studio-v0.3.2/install.sh"
+shopt -s nullglob
+installers=("$PAYLOAD_DIR"/supvan-label-studio-v*/install.sh)
+if ((${#installers[@]} != 1)); then
+  echo "Installer payload does not contain exactly one SUPVAN Label Studio release." >&2
+  exit 2
+fi
+"${installers[0]}"
 exit 0
 
 __SUPVAN_ARCHIVE_BELOW__
