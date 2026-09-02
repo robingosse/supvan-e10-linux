@@ -107,6 +107,7 @@ class TextItem(Item):
     size_mm: float = 3.0
     family: str = "DejaVu Sans"
     bold: bool = False
+    autofit_height: bool = False
 
 
 @dataclass
@@ -156,7 +157,7 @@ ITEM_CLASSES = {
 class LabelDocument:
     length_mm: float = 50.0
     stock_width_mm: float = DEFAULT_STOCK_WIDTH_MM
-    queue: str = ""
+    queue: str = "gosse-e10"
     density: int = 8
     auto_size: bool = True
     auto_margin_mm: float = 3.0
@@ -174,7 +175,11 @@ class LabelDocument:
 
     def add(self, item: Item) -> Item:
         if not item.id:
-            item.id = f"item-{len(self.items)+1}"
+            used = {existing.id for existing in self.items}
+            number = 1
+            while f"item-{number}" in used:
+                number += 1
+            item.id = f"item-{number}"
         self.items.append(item)
         if self.auto_size:
             self.auto_length(self.auto_margin_mm, 10.0)
@@ -184,6 +189,45 @@ class LabelDocument:
 
     def remove(self, item: Item) -> None:
         self.items.remove(item)
+
+    def move_layer(self, item: Item, offset: int) -> int:
+        """Move an item through the paint order and return its new index."""
+        if item not in self.items:
+            raise ValueError("Item is not in this document")
+        old_index = self.items.index(item)
+        new_index = int(_clamp(old_index + offset, 0, len(self.items) - 1))
+        if new_index != old_index:
+            self.items.pop(old_index)
+            self.items.insert(new_index, item)
+        return new_index
+
+    def align_across(self, item: Item, alignment: str) -> float:
+        """Align an item within the verified 11 mm printable band."""
+        if item not in self.items:
+            raise ValueError("Item is not in this document")
+        _, _, width, _ = self.item_bounds_mm(item)
+        available = max(0.0, PRINTABLE_WIDTH_MM - width)
+        if alignment == "start":
+            item.x_mm = 0.0
+        elif alignment == "center":
+            item.x_mm = available / 2.0
+        elif alignment == "end":
+            item.x_mm = available
+        else:
+            raise ValueError(f"Unknown alignment: {alignment}")
+        self.clamp_item(item, allow_length_extend=self.auto_size)
+        return item.x_mm
+
+    def content_bounds_mm(self) -> tuple[float, float, float, float] | None:
+        """Return x/y/width/height for all content, or None for a blank label."""
+        if not self.items:
+            return None
+        bounds = [self.item_bounds_mm(item) for item in self.items]
+        left = min(x for x, _, _, _ in bounds)
+        top = min(y for _, y, _, _ in bounds)
+        right = max(x + width for x, _, width, _ in bounds)
+        bottom = max(y + height for _, y, _, height in bounds)
+        return left, top, right - left, bottom - top
 
     def duplicate(self, item: Item) -> Item:
         data = item.to_dict()
@@ -212,7 +256,7 @@ class LabelDocument:
             version=int(data.get("version", 1)),
             length_mm=float(data.get("length_mm", 50.0)),
             stock_width_mm=float(data.get("stock_width_mm", DEFAULT_STOCK_WIDTH_MM)),
-            queue=str(data.get("queue", "")),
+            queue=str(data.get("queue", "gosse-e10")),
             density=int(data.get("density", 8)),
             auto_size=bool(data.get("auto_size", True)),
             auto_margin_mm=float(data.get("auto_margin_mm", 3.0)),
@@ -323,21 +367,61 @@ def _rotate(tile: Image.Image, mask: Image.Image | None, rotation: int) -> tuple
     )
 
 
-def _text_tile(item: TextItem) -> tuple[Image.Image, Image.Image]:
-    font_px = max(6, mm_to_dots(item.size_mm))
-    font = ImageFont.truetype(resolve_font(item.family, item.bold), font_px)
+def _measure_multiline(text: str, font: ImageFont.FreeTypeFont, spacing: int) -> tuple[int, int, int, int]:
     dummy = Image.new("L", (2, 2), 255)
     draw = ImageDraw.Draw(dummy)
-    bbox = draw.multiline_textbbox((0, 0), item.text or " ", font=font, spacing=max(1, font_px // 5))
-    w = max(1, bbox[2] - bbox[0] + 2)
-    h = max(1, bbox[3] - bbox[1] + 2)
+    return draw.multiline_textbbox((0, 0), text or " ", font=font, spacing=spacing)
+
+
+def _font_for_height(item: TextItem, font_path: str, target_height_px: int) -> tuple[ImageFont.FreeTypeFont, int, tuple[int, int, int, int]]:
+    """Largest font whose complete multiline block fits the requested height."""
+    lo = 4
+    hi = max(lo, int(target_height_px))
+    best_size = lo
+    best_font = ImageFont.truetype(font_path, best_size)
+    best_spacing = max(1, best_size // 5)
+    best_bbox = _measure_multiline(item.text, best_font, best_spacing)
+    while lo <= hi:
+        size = (lo + hi) // 2
+        font = ImageFont.truetype(font_path, size)
+        spacing = max(1, size // 5)
+        bbox = _measure_multiline(item.text, font, spacing)
+        needed = max(1, bbox[3] - bbox[1]) + 2
+        if needed <= target_height_px:
+            best_size = size
+            best_font = font
+            best_spacing = spacing
+            best_bbox = bbox
+            lo = size + 1
+        else:
+            hi = size - 1
+    return best_font, best_spacing, best_bbox
+
+
+def _text_tile(item: TextItem) -> tuple[Image.Image, Image.Image]:
+    font_path = resolve_font(item.family, item.bold)
+    if item.autofit_height:
+        target_height = max(6, mm_to_dots(item.size_mm))
+        font, spacing, bbox = _font_for_height(item, font_path, target_height)
+        w = max(1, bbox[2] - bbox[0] + 2)
+        h = target_height
+        y = max(1 - bbox[1], (target_height - (bbox[3] - bbox[1])) // 2 - bbox[1])
+        pos = (1 - bbox[0], y)
+    else:
+        font_px = max(6, mm_to_dots(item.size_mm))
+        font = ImageFont.truetype(font_path, font_px)
+        spacing = max(1, font_px // 5)
+        bbox = _measure_multiline(item.text, font, spacing)
+        w = max(1, bbox[2] - bbox[0] + 2)
+        h = max(1, bbox[3] - bbox[1] + 2)
+        pos = (1 - bbox[0], 1 - bbox[1])
+
     tile = Image.new("L", (w, h), 255)
     mask = Image.new("L", (w, h), 0)
     td = ImageDraw.Draw(tile)
     md = ImageDraw.Draw(mask)
-    pos = (1 - bbox[0], 1 - bbox[1])
-    td.multiline_text(pos, item.text or " ", font=font, fill=0, spacing=max(1, font_px // 5))
-    md.multiline_text(pos, item.text or " ", font=font, fill=255, spacing=max(1, font_px // 5))
+    td.multiline_text(pos, item.text or " ", font=font, fill=0, spacing=spacing)
+    md.multiline_text(pos, item.text or " ", font=font, fill=255, spacing=spacing)
     return _rotate(tile, mask, item.rotation)
 
 
