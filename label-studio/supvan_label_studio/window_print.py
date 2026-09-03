@@ -11,7 +11,7 @@ from .history import document_snapshot
 from .print_backend import PrintError, choose_preferred_queue, list_printer_queues, preflight_printer, print_document
 from .printer_profiles import (
     PrinterProfile, apply_profile_to_document, detected_media_choices,
-    detected_resolution_dpi, profile_for_queue, save_profile,
+    detected_resolution_dpi, documented_family_for_queue, profile_for_queue, save_profile,
 )
 from .workbench_bridge import load_workbench_session
 
@@ -41,21 +41,31 @@ class MainWindowPrintMixin:
             return None
         queue = self.queue_text() if hasattr(self, "queue_combo") else self.doc.queue
         profile = profile_for_queue(queue, self.doc.stock_width_mm)
+        family = documented_family_for_queue(queue)
         if profile is None:
             if hasattr(self, "stock_spin"):
                 self.stock_spin.set_sensitive(True)
-            self.printer_profile_label.set_text(
-                f"Unconfigured CUPS queue · using document geometry: "
-                f"{self.doc.printable_width_mm:.3f} mm / {self.doc.printable_width_dots} dots. "
-                "Use Printer / Media Setup before relying on physical dimensions."
-            )
+            if family is not None:
+                self.printer_profile_label.set_text(
+                    f"Recognized: {family.capability_summary}. "
+                    f"{family.notes} Use Printer / Media Setup to record the exact physical printable band "
+                    "before relying on edge placement."
+                )
+            else:
+                self.printer_profile_label.set_text(
+                    f"Unconfigured CUPS queue · using document geometry: "
+                    f"{self.doc.printable_width_mm:.3f} mm / {self.doc.printable_width_dots} dots. "
+                    "Use Printer / Media Setup before relying on physical dimensions."
+                )
             return None
         apply_profile_to_document(self.doc, profile)
         self.doc.queue = queue
         if hasattr(self, "stock_spin"):
-            # Built-in verified media geometry is physical truth; custom profiles remain editable.
+            # Only physically validated built-ins lock stock geometry. Vendor-documented
+            # defaults remain editable so a real printer test can supersede them.
             self.stock_spin.set_sensitive(not (profile.built_in and profile.verified))
-        self.printer_profile_label.set_text(profile.summary)
+        extra = f" · {profile.notes}" if profile.notes else ""
+        self.printer_profile_label.set_text(profile.summary + extra)
         if hasattr(self, "across_spin"):
             self.across_spin.set_range(0.0, self.doc.printable_width_mm)
             self.across_spin.set_increments(self.doc.one_dot_mm, 1.0)
@@ -69,15 +79,23 @@ class MainWindowPrintMixin:
             self.show_error("Printer setup", "Select a CUPS queue first.")
             return
         current = profile_for_queue(queue, self.doc.stock_width_mm)
-        detected_dpi = detected_resolution_dpi(queue) or (current.nominal_dpi if current else 203)
+        family = documented_family_for_queue(queue)
+        family_dpi = family.resolutions_dpi[0] if family and family.resolutions_dpi else 203
+        detected_dpi = detected_resolution_dpi(queue) or (current.nominal_dpi if current else family_dpi)
         media_choices, media_default = detected_media_choices(queue)
 
         dialog = Gtk.Dialog(title=f"Printer / Media Setup · {queue}", transient_for=self, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Save Profile", Gtk.ResponseType.OK)
         grid = Gtk.Grid(column_spacing=8, row_spacing=8, margin=12)
 
-        name = Gtk.Entry(); name.set_text(current.name if current else queue)
-        stock = Gtk.SpinButton.new_with_range(1.0, 500.0, 0.125); stock.set_digits(3); stock.set_value(current.nominal_stock_width_mm if current else self.doc.stock_width_mm)
+        family_name = f"{family.vendor} {family.name}" if family else queue
+        default_stock = (
+            current.nominal_stock_width_mm if current else
+            family.media_width_max_mm if family and family.media_width_max_mm is not None else
+            self.doc.stock_width_mm
+        )
+        name = Gtk.Entry(); name.set_text(current.name if current else family_name)
+        stock = Gtk.SpinButton.new_with_range(1.0, 500.0, 0.125); stock.set_digits(3); stock.set_value(default_stock)
         printable = Gtk.SpinButton.new_with_range(1.0, 500.0, 0.125); printable.set_digits(3); printable.set_value(current.printable_width_mm if current else self.doc.printable_width_mm)
         dpi = Gtk.SpinButton.new_with_range(25, 4800, 1); dpi.set_digits(0); dpi.set_value(current.nominal_dpi if current else detected_dpi)
         media = Gtk.ComboBoxText.new_with_entry()
@@ -95,13 +113,14 @@ class MainWindowPrintMixin:
             grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
             grid.attach(widget, 1, row, 1, 1)
         grid.attach(verified, 0, len(rows), 2, 1)
-        note = Gtk.Label(
-            label=(
-                "CUPS can report queues, resolution and media choices, but many drivers do not report "
-                "their true unprintable margins. The usable width is therefore explicit profile data, "
-                "not guessed by Studio."
-            ), xalign=0
+        note_text = (
+            "CUPS can report queues, resolution and media choices, but many drivers do not report "
+            "their true unprintable margins. The usable width is therefore explicit profile data, "
+            "not guessed by Studio."
         )
+        if family:
+            note_text += f"\n\nCatalog match: {family.capability_summary}. {family.notes}"
+        note = Gtk.Label(label=note_text, xalign=0)
         note.set_line_wrap(True)
         grid.attach(note, 0, len(rows) + 1, 2, 1)
         dialog.get_content_area().add(grid)
@@ -126,12 +145,17 @@ class MainWindowPrintMixin:
                     )
                     dialog.destroy()
                     return
+            is_verified = verified.get_active()
             profile = PrinterProfile(
                 key=f"cups-{queue}", name=name.get_text().strip() or queue, queue=queue,
                 printable_width_dots=width_dots, dots_per_mm=dpm,
                 nominal_stock_width_mm=float(stock.get_value()), nominal_dpi=target_dpi,
                 transport=transport, media=media.get_child().get_text().strip(),
-                verified=verified.get_active(), built_in=False,
+                verified=is_verified, built_in=False,
+                vendor=(current.vendor if current else family.vendor if family else ""),
+                family=(current.family if current else family.name if family else ""),
+                evidence="hardware-validated" if is_verified else "user-configured",
+                notes=(current.notes if current else family.notes if family else ""),
             )
             save_profile(profile)
             apply_profile_to_document(self.doc, profile)
@@ -150,7 +174,13 @@ class MainWindowPrintMixin:
         details = "\n".join(check.details) if check.details else "No additional details."
         if check.ready:
             profile = profile_for_queue(self.queue_text(), self.doc.stock_width_mm)
-            geometry = profile.summary if profile else f"Geometry unconfigured · document currently {self.doc.printable_width_mm:.3f} mm / {self.doc.printable_width_dots} dots"
+            family = documented_family_for_queue(self.queue_text())
+            if profile:
+                geometry = profile.summary
+            elif family:
+                geometry = f"{family.capability_summary}\nExact physical printable band is not configured."
+            else:
+                geometry = f"Geometry unconfigured · document currently {self.doc.printable_width_mm:.3f} mm / {self.doc.printable_width_dots} dots"
             self.show_info("Printer ready", f"{check.summary}\n\n{geometry}\n\n{details}")
         else:
             self.show_error("Printer needs attention", f"{check.summary}\n\n{details}")
