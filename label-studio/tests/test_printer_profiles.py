@@ -14,6 +14,7 @@ from supvan_label_studio.printer_profiles import (
     profile_for_queue,
     save_profile,
 )
+from supvan_label_studio.window_media import should_apply_catalog_stock
 
 
 def test_e10_profile_preserves_validated_linux_geometry():
@@ -148,3 +149,25 @@ def test_queue_specific_calibration_overrides_builtin_catalog(tmp_path):
     assert loaded.key == "calibrated-brother"
     assert loaded.printable_width_dots == 126
     assert loaded.verified
+
+
+def test_media_change_uses_exact_brother_catalog_width_only():
+    family = documented_family_for_queue("Brother_PT-P710BT")
+    profile = documented_profile_for_queue("Brother_PT-P710BT", 24.0)
+    assert family is not None and profile is not None
+    assert should_apply_catalog_stock(profile, family, 12.0)
+    assert should_apply_catalog_stock(profile, family, 18.0)
+    assert not should_apply_catalog_stock(profile, family, 13.0)
+
+
+def test_media_change_never_overwrites_calibrated_or_e10_geometry():
+    brother_family = documented_family_for_queue("Brother_PT-P710BT")
+    calibrated = PrinterProfile(
+        key="calibrated", name="Calibrated", queue="Brother_PT-P710BT",
+        printable_width_dots=126, dots_per_mm=180.0 / 25.4,
+        nominal_stock_width_mm=24.0, nominal_dpi=180,
+        verified=True, built_in=False, evidence="hardware-validated",
+    )
+    assert brother_family is not None
+    assert not should_apply_catalog_stock(calibrated, brother_family, 12.0)
+    assert not should_apply_catalog_stock(e10_profile("gosse-e10"), brother_family, 12.0)
