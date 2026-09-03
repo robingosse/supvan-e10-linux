@@ -8,6 +8,8 @@ import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .printer_catalog import PrinterFamily, family_for_queue
+
 E10_PROFILE_KEY = "supvan-e10-linux-validated"
 E10_PRINTABLE_WIDTH_DOTS = 88
 E10_DOTS_PER_MM = 8.0
@@ -28,6 +30,10 @@ class PrinterProfile:
     cups_options: list[str] = field(default_factory=list)
     verified: bool = False
     built_in: bool = False
+    vendor: str = ""
+    family: str = ""
+    evidence: str = "user-configured"
+    notes: str = ""
 
     def validate(self) -> None:
         self.key = str(self.key or "custom").strip()
@@ -42,6 +48,10 @@ class PrinterProfile:
         self.cups_options = [str(v).strip() for v in self.cups_options if str(v).strip()]
         self.verified = bool(self.verified)
         self.built_in = bool(self.built_in)
+        self.vendor = str(self.vendor or "").strip()
+        self.family = str(self.family or "").strip()
+        self.evidence = str(self.evidence or "unverified").strip()
+        self.notes = str(self.notes or "").strip()
 
     @property
     def printable_width_mm(self) -> float:
@@ -49,7 +59,14 @@ class PrinterProfile:
 
     @property
     def summary(self) -> str:
-        truth = "validated" if self.verified else "unverified"
+        if self.verified:
+            truth = "hardware validated"
+        elif self.evidence == "vendor-documented":
+            truth = "vendor documented · hardware unverified"
+        elif self.evidence == "community-documented":
+            truth = "community documented · experimental"
+        else:
+            truth = "unverified"
         return (
             f"{self.name} · {self.printable_width_mm:.3f} mm usable · "
             f"{self.printable_width_dots} dots · {self.nominal_dpi} dpi · {truth}"
@@ -78,6 +95,43 @@ def e10_profile(queue: str = "gosse-e10", stock_width_mm: float = 15.0) -> Print
         transport="e10-exact-jpeg",
         verified=True,
         built_in=True,
+        vendor="SUPVAN",
+        family="E10",
+        evidence="hardware-validated",
+        notes="Physical E10 production path validated at 88 dots across 15 mm stock.",
+    )
+
+
+def documented_family_for_queue(queue: str) -> PrinterFamily | None:
+    """Return a recognized vendor family even when exact print geometry is unknown."""
+    return family_for_queue(queue)
+
+
+def documented_profile_for_queue(queue: str, stock_width_mm: float = 15.0) -> PrinterProfile | None:
+    family = family_for_queue(queue)
+    if family is None:
+        return None
+    geometry = family.geometry_for_stock(stock_width_mm)
+    if geometry is None:
+        # Some printers (currently Rollo X1040) publish resolution and media
+        # envelope but not an exact printable band.  Returning no geometry is a
+        # feature: Studio must not pretend the entire stock width is printable.
+        return None
+    return PrinterProfile(
+        key=family.key,
+        name=f"{family.vendor} {family.name}",
+        queue=str(queue or "").strip(),
+        printable_width_dots=geometry.printable_width_dots,
+        dots_per_mm=geometry.dots_per_mm,
+        nominal_stock_width_mm=geometry.stock_width_mm,
+        nominal_dpi=geometry.nominal_dpi,
+        transport="cups-image",
+        verified=False,
+        built_in=True,
+        vendor=family.vendor,
+        family=family.name,
+        evidence=family.evidence,
+        notes=family.notes,
     )
 
 
@@ -120,12 +174,14 @@ def save_profile(profile: PrinterProfile, path: Path | None = None) -> Path:
 
 def profile_for_queue(queue: str, stock_width_mm: float = 15.0, path: Path | None = None) -> PrinterProfile | None:
     queue = str(queue or "").strip()
+    # A queue-specific profile deliberately overrides catalog defaults. This is
+    # how a physical calibration becomes production truth without editing code.
     configured = load_profiles(path).get(queue)
     if configured:
         return configured
     if _looks_like_e10(queue):
         return e10_profile(queue)
-    return None
+    return documented_profile_for_queue(queue, stock_width_mm)
 
 
 def apply_profile_to_document(doc, profile: PrinterProfile) -> None:

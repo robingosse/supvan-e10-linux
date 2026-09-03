@@ -17,11 +17,13 @@ except Exception:  # pragma: no cover - exercised on a desktop with GTK installe
 from .window_edit import MainWindowEditMixin
 from .window_io import MainWindowIOMixin
 from .window_layout import MainWindowLayoutMixin
+from .window_media import MainWindowMediaMixin
 from .window_print import MainWindowPrintMixin
 
 
 class MainWindow(
     MainWindowLayoutMixin,
+    MainWindowMediaMixin,
     MainWindowEditMixin,
     MainWindowPrintMixin,
     MainWindowIOMixin,

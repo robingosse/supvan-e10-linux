@@ -4,6 +4,11 @@ Linux-native continuous-label editor built around Robin's SUPVAN E10, with a
 printer-profile layer for adapting the same editor to other properly installed
 CUPS printers.
 
+> **Source-state note:** this repository is currently at v0.3.4 while newer
+> workstation builds reached v0.3.10. Multivendor printer work is intentionally
+> isolated on a feature branch so it can be ported onto the newer UI source
+> without resurrecting older interface code.
+
 ## v0.3.4 — continuous tape model
 
 The normal E10 workflow is now modeled correctly as **15 mm continuous tape**,
@@ -66,6 +71,41 @@ stack:
 The built-in verified E10 profile is now canonical **15 mm stock**. Generic/custom
 printer profiles remain free to use different physical media widths.
 
+### Multivendor catalog
+
+The feature branch adds five high-value printer ecosystems chosen to cover the
+consumer, portable, office, industrial, and shipping-label markets rather than
+five near-identical models from one vendor.
+
+| Family | Built-in parameters | Current transport | Gosse validation state |
+| --- | --- | --- | --- |
+| Brother P-touch PT-P710BT | Exact TZe 3.5/6/9/12/18/24 mm raster bands; 180 dpi base geometry | CUPS raster; Brother's documented native raster protocol is eligible for a direct adapter | Vendor documented; hardware test pending |
+| NIIMBOT B1 | 203 dpi; 20–50 mm media; 384-dot / 48 mm effective band | CUPS when available; direct Bluetooth/USB adapter remains experimental | Vendor geometry documented; direct protocol test pending |
+| DYMO LabelWriter 550 / 550 Turbo | 300 dpi; 62 mm max media; conservative 56 mm max-print profile | Official Linux/CUPS driver; native raster protocol is also documented | Vendor documented; hardware test pending |
+| Zebra ZD421 203 dpi | 203 dpi / 8 dots/mm; 108 mm max direct-thermal media; 832-dot / 104 mm max print width | CUPS/IPP or raw ZPL II | Vendor documented; hardware test pending |
+| Rollo X1040 Wireless | 203 dpi; 40–104 mm media | Driverless IPP/AirPrint over Wi-Fi | Recognized only: exact printable band must be measured/configured |
+
+This distinction is deliberate. **Built-in** means Studio knows a vendor-published
+capability. **Hardware validated** means a real printer has passed an acceptance
+label through our exact software path. Only the SUPVAN E10 currently has that
+status. A per-queue calibration always overrides catalog defaults, so production
+truth can improve without changing application code.
+
+Primary vendor references used for the catalog:
+
+- Brother PT-P710BT Raster Command Reference:
+  https://support.brother.com/g/b/manualtop.aspx?c=ca&lang=en&prod=p710bteus
+- NIIMBOT B1 commercial specifications:
+  https://www.niimbot.com/us/solutionOverseas/retail
+- DYMO SDK / Linux drivers:
+  https://www.dymo.com/online-support-sdk.html
+- DYMO LabelWriter 550 technical reference:
+  https://download.dymo.com/dymo/user-guides/LabelWriter/LW550Series/LW%20550%20Technical%20Reference.pdf
+- Zebra ZD421 specifications:
+  https://www.zebra.com/us/en/products/spec-sheets/printers/desktop/zd421-series.html
+- Rollo X1040 Wireless specifications:
+  https://www.rollo.com/product/rollo-wireless-printer/
+
 User printer profiles are stored at:
 
 ```text
@@ -121,7 +161,8 @@ PYTHONPATH=. python3 scripts/self-test.py
 
 v0.3.4 contains **34 automated tests**, including explicit coverage that 90°
 continuous text keeps the same physical print-band width while longer messages
-produce longer feed rasters.
+produce longer feed rasters. The multivendor feature branch adds catalog and
+geometry-safety coverage for the five additional printer ecosystems.
 
 ## Uninstall
 
